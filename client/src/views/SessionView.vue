@@ -32,6 +32,7 @@
         :currentChapterId="narrativeStore.currentChapterId"
         @select="switchChapter"
         @create="createChapter"
+        @rename="renameChapter"
       />
       <CharacterPanel
         :characters="narrativeStore.characters"
@@ -135,6 +136,16 @@ async function createChapter() {
     narrativeStore.setChapters(sessionStore.currentSession.chapters);
     await narrativeStore.loadChapter(sessionId, chapter.id);
     sidebarOpen.value = false;
+  } catch (err) {
+    narrativeStore.error = err.message;
+  }
+}
+
+async function renameChapter({ chapterId, title }) {
+  try {
+    await api.put(`sessions/${sessionId}/chapters/${chapterId}`, { json: { title } }).json();
+    const chapter = sessionStore.currentSession.chapters.find(c => c.id === chapterId);
+    if (chapter) chapter.title = title;
   } catch (err) {
     narrativeStore.error = err.message;
   }

@@ -246,4 +246,25 @@ router.post('/chapters', async (req, res) => {
   }
 });
 
+router.put('/chapters/:chapterId', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { chapterId } = req.params;
+    const { title } = req.body;
+    const session = await getSession(sessionId);
+
+    const chapter = session.chapters.find(c => c.id === chapterId);
+    if (!chapter) {
+      return res.status(404).json({ message: 'Chapter not found' });
+    }
+
+    if (title) chapter.title = title;
+    await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
+
+    res.json(chapter);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 export default router;
