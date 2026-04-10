@@ -60,7 +60,7 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
         ...samplerParams,
         ...providerOptions,
       },
-      timeout: 300000,
+      timeout: 600000,
     }).json();
   } catch (err) {
     const durationMs = Date.now() - startTime;
