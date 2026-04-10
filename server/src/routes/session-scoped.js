@@ -150,6 +150,38 @@ router.post('/regenerate', async (req, res) => {
   }
 });
 
+// Edit a chunk's narrative
+router.put('/chunks/:chunkId', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { chunkId } = req.params;
+    const { narrative } = req.body;
+
+    if (!narrative) {
+      return res.status(400).json({ message: 'narrative is required' });
+    }
+
+    const { readJSON, writeJSON } = await import('../services/storage.js');
+    const { SESSIONS_DIR } = await import('../utils/paths.js');
+    const pathMod = await import('node:path');
+    const chunksPath = pathMod.join(SESSIONS_DIR, sessionId, 'chunks.json');
+    const chunks = await readJSON(chunksPath) || [];
+
+    const chunk = chunks.find(c => c.id === chunkId);
+    if (!chunk) {
+      return res.status(404).json({ message: 'Chunk not found' });
+    }
+
+    chunk.narrative = narrative;
+    chunk.editedAt = new Date().toISOString();
+    await writeJSON(chunksPath, chunks);
+
+    res.json(chunk);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 router.delete('/chunks/last', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;

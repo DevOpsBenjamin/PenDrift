@@ -58,6 +58,7 @@
         :generating="narrativeStore.generating"
         @regenerate="handleRegenerate"
         @delete="handleDelete"
+        @edit="handleEdit"
       />
       <DirectiveInput
         :generating="narrativeStore.generating"
@@ -160,6 +161,16 @@ async function handleGenerate({ directive, isKeyMoment }) {
 
 async function handleRegenerate() {
   await narrativeStore.regenerateLast(sessionId);
+}
+
+async function handleEdit({ chunkId, narrative }) {
+  try {
+    const updated = await api.put(`sessions/${sessionId}/chunks/${chunkId}`, { json: { narrative } }).json();
+    const chunk = narrativeStore.chunks.find(c => c.id === chunkId);
+    if (chunk) chunk.narrative = updated.narrative;
+  } catch (err) {
+    narrativeStore.error = err.message;
+  }
 }
 
 async function handleDelete() {
