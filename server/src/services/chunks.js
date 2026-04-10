@@ -16,7 +16,7 @@ export async function getChunksByChapter(sessionId, chapterId) {
   return chunks.filter(c => c.chapterId === chapterId);
 }
 
-export async function appendChunk(sessionId, { chapterId, narrative, directive, isKeyMoment }) {
+export async function appendChunk(sessionId, { chapterId, narrative, thinking, directive, isKeyMoment }) {
   const chunks = await getChunks(sessionId);
 
   const chunk = {
@@ -24,6 +24,7 @@ export async function appendChunk(sessionId, { chapterId, narrative, directive, 
     sessionId,
     chapterId,
     narrative,
+    thinking: thinking || null,
     directive: directive || null,
     imagePrompt: null,
     imagePath: null,

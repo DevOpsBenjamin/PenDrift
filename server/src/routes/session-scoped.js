@@ -69,6 +69,7 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
     const chunk = await appendChunk(sessionId, {
       chapterId,
       narrative,
+      thinking: thinking || null,
       directive,
       isKeyMoment: isKeyMoment || false,
     });
