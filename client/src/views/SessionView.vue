@@ -178,15 +178,13 @@ async function handleEdit({ chunkId, narrative }) {
   }
 }
 
-async function handleSwitchVersion({ chunkId, versionIndex }) {
-  try {
-    const updated = await generateApi.setChunkVersion(sessionId, chunkId, versionIndex);
-    const chunk = narrativeStore.chunks.find(c => c.id === chunkId);
-    if (chunk) {
-      chunk.activeVersion = updated.activeVersion;
-    }
-  } catch (err) {
-    narrativeStore.error = err.message;
+function handleSwitchVersion({ chunkId, versionIndex }) {
+  // Instant client-side switch — no API call, persisted on next save/generate
+  const chunk = narrativeStore.chunks.find(c => c.id === chunkId);
+  if (chunk) {
+    chunk.activeVersion = versionIndex;
+    // Lazy persist in background, don't block UI
+    generateApi.setChunkVersion(sessionId, chunkId, versionIndex).catch(() => {});
   }
 }
 
