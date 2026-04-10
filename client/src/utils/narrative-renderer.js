@@ -4,24 +4,21 @@ import MarkdownIt from 'markdown-it';
  * Custom markdown-it renderer for narrative prose.
  *
  * Conventions for the LLM:
- * - "Dialogue in double quotes" → styled as speech
+ * - "Dialogue in double quotes" → warm dialogue color
  * - *Italic text* → inner thoughts / emphasis
  * - **Bold text** → strong emphasis / key moments
- * - 'Single quote text' → internal monologue
+ * - 'Single quote text' → internal monologue (muted)
  * - --- → scene break
  * - Regular paragraphs → narrative prose
  */
 
 const md = new MarkdownIt({
   html: false,
-  breaks: true,      // Convert \n to <br>
-  typographer: true,  // Smart quotes, dashes
+  breaks: true,
+  typographer: false,
 });
 
-// Custom rule: wrap "double quoted dialogue" in a span
-const defaultTextRenderer = md.renderer.rules.text || ((tokens, idx) => tokens[idx].content);
-
-md.renderer.rules.text = (tokens, idx, options, env, self) => {
+md.renderer.rules.text = (tokens, idx) => {
   let content = tokens[idx].content;
 
   // Style "dialogue" — double quotes
@@ -30,7 +27,16 @@ md.renderer.rules.text = (tokens, idx, options, env, self) => {
     '<span class="narrative-dialogue">\u201C$1\u201D</span>'
   );
 
-  // Style 'inner monologue' — single quotes used for thoughts
+  // Also handle smart quotes already in text
+  content = content.replace(
+    /\u201C([^\u201D]+)\u201D/g,
+    (match, inner) => {
+      if (match.includes('narrative-dialogue')) return match;
+      return `<span class="narrative-dialogue">\u201C${inner}\u201D</span>`;
+    }
+  );
+
+  // Style 'inner monologue' — single quotes
   content = content.replace(
     /(?<!\w)'([^']+)'(?!\w)/g,
     '<span class="narrative-thought">\u2018$1\u2019</span>'
@@ -39,7 +45,6 @@ md.renderer.rules.text = (tokens, idx, options, env, self) => {
   return content;
 };
 
-// Style horizontal rules as scene breaks
 md.renderer.rules.hr = () => {
   return '<div class="narrative-scene-break"><span></span></div>';
 };
