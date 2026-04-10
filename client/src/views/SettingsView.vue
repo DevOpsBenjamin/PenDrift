@@ -104,21 +104,67 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-3">
+        <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Samplers</h3>
+        <div class="grid grid-cols-3 sm:grid-cols-4 gap-3">
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Temp</label>
+            <label class="text-xs text-text-muted">Temp</label>
             <input v-model.number="editing.temperature" type="number" step="0.1" min="0" max="2"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Max Tokens</label>
+            <label class="text-xs text-text-muted">Top P</label>
+            <input v-model.number="editing.topP" type="number" step="0.05" min="0" max="1"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Top K</label>
+            <input v-model.number="editing.topK" type="number" step="1" min="0"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Min P</label>
+            <input v-model.number="editing.minP" type="number" step="0.01" min="0" max="1"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Presence Pen.</label>
+            <input v-model.number="editing.presencePenalty" type="number" step="0.1" min="-2" max="2"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Frequency Pen.</label>
+            <input v-model.number="editing.frequencyPenalty" type="number" step="0.1" min="-2" max="2"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Repeat Pen.</label>
+            <input v-model.number="editing.repeatPenalty" type="number" step="0.1" min="0" max="2"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Seed</label>
+            <input v-model.number="editing.seed" type="number" step="1"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Max Tokens</label>
             <input v-model.number="editing.maxTokens" type="number" step="256" min="256"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Context</label>
+            <label class="text-xs text-text-muted">Context Size</label>
             <input v-model.number="editing.contextSize" type="number" step="1024" min="1024"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
@@ -258,7 +304,14 @@ function startNew() {
     narrativeModel: '',
     metaModel: '',
     utilityModel: '',
-    temperature: 0.8,
+    temperature: 0.7,
+    topP: 0.8,
+    topK: 20,
+    minP: null,
+    presencePenalty: 1.5,
+    frequencyPenalty: null,
+    repeatPenalty: null,
+    seed: null,
     maxTokens: 2048,
     contextSize: 8192,
     recentChunksCount: 20,

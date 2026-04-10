@@ -2,14 +2,35 @@ import ky from 'ky';
 import { stripThinkBlocks } from '../utils/think-parser.js';
 
 /**
+ * Builds the sampler params object from settings, omitting unset values.
+ */
+function buildSamplerParams(settings) {
+  const params = {};
+
+  if (settings.temperature != null) params.temperature = settings.temperature;
+  if (settings.maxTokens != null) params.max_tokens = settings.maxTokens;
+  if (settings.topP != null) params.top_p = settings.topP;
+  if (settings.topK != null) params.top_k = settings.topK;
+  if (settings.minP != null) params.min_p = settings.minP;
+  if (settings.presencePenalty != null) params.presence_penalty = settings.presencePenalty;
+  if (settings.frequencyPenalty != null) params.frequency_penalty = settings.frequencyPenalty;
+  if (settings.repeatPenalty != null) params.repeat_penalty = settings.repeatPenalty;
+  if (settings.seed != null) params.seed = settings.seed;
+
+  return params;
+}
+
+/**
  * Calls the OpenAI-compatible chat completions endpoint with a specific model.
  * @param {Array} messages - The messages array
  * @param {Object} settings - Full settings preset
  * @param {string} modelOverride - Which model to use (overrides default)
  */
 export async function generateCompletion(messages, settings, modelOverride) {
-  const { apiEndpoint, temperature, maxTokens, thinkBlockStart, thinkBlockEnd } = settings;
+  const { apiEndpoint, thinkBlockStart, thinkBlockEnd } = settings;
   const model = modelOverride || settings.narrativeModel || settings.model;
+
+  const samplerParams = buildSamplerParams(settings);
 
   let data;
   try {
@@ -17,8 +38,7 @@ export async function generateCompletion(messages, settings, modelOverride) {
       json: {
         model,
         messages,
-        temperature: temperature ?? 0.8,
-        max_tokens: maxTokens ?? 2048,
+        ...samplerParams,
       },
       timeout: 300000,
     }).json();
