@@ -12,7 +12,7 @@ export const useNarrativeStore = defineStore('narrative', {
     characters: [],
     consistencyFlags: [],
     generating: false,
-    activeJobId: null,
+    activeJobs: {},  // { sessionId: jobId }
     metaUpdatePending: false,
     error: null,
   }),
@@ -28,6 +28,10 @@ export const useNarrativeStore = defineStore('narrative', {
   },
 
   actions: {
+    isSessionGenerating(sessionId) {
+      return !!this.activeJobs[sessionId || this.currentSessionId];
+    },
+
     setChapters(sessionId, chapters) {
       this.currentSessionId = sessionId;
       this.chapters = chapters;
@@ -36,6 +40,14 @@ export const useNarrativeStore = defineStore('narrative', {
         this.currentChapterId = chapters[0].id;
       }
       this.chunks = [];
+      // Resume polling if this session has an active job
+      const existingJob = this.activeJobs[sessionId];
+      if (existingJob) {
+        this.generating = true;
+        this.pollJob(sessionId, existingJob);
+      } else {
+        this.generating = false;
+      }
     },
 
     async loadChapter(sessionId, chapterId) {
@@ -68,8 +80,7 @@ export const useNarrativeStore = defineStore('narrative', {
           directive,
           isKeyMoment,
         });
-        this.activeJobId = jobId;
-        // Poll for result
+        this.activeJobs[sessionId] = jobId;
         this.pollJob(sessionId, jobId);
       } catch (err) {
         this.error = err.message;
@@ -92,12 +103,11 @@ export const useNarrativeStore = defineStore('narrative', {
         const { jobId } = await generateApi.startRegeneration(sessionId, {
           chapterId: this.currentChapterId,
         });
-        this.activeJobId = jobId;
+        this.activeJobs[sessionId] = jobId;
         this.pollJob(sessionId, jobId);
       } catch (err) {
         this.error = err.message;
         this.generating = false;
-        // Reload chapter to restore state on error
         await this.loadChapter(sessionId, this.currentChapterId);
       }
     },
@@ -119,15 +129,17 @@ export const useNarrativeStore = defineStore('narrative', {
 
     pollJob(sessionId, jobId) {
       const poll = async () => {
-        // Stop polling if user navigated away or job changed
-        if (this.activeJobId !== jobId) return;
+        // Stop polling if job was replaced
+        if (this.activeJobs[sessionId] !== jobId) return;
 
         try {
           const job = await generateApi.getJobStatus(sessionId, jobId);
 
           if (job.status === 'done') {
-            this.generating = false;
-            this.activeJobId = null;
+            delete this.activeJobs[sessionId];
+            if (this.currentSessionId === sessionId) {
+              this.generating = false;
+            }
 
             if (job.result?.chunk) {
               // Only append if we're still on the same session/chapter
@@ -141,16 +153,20 @@ export const useNarrativeStore = defineStore('narrative', {
               this.pollMetaStatus(sessionId);
             }
           } else if (job.status === 'failed') {
-            this.generating = false;
-            this.activeJobId = null;
-            this.error = job.error || 'Generation failed';
+            delete this.activeJobs[sessionId];
+            if (this.currentSessionId === sessionId) {
+              this.generating = false;
+              this.error = job.error || 'Generation failed';
+            }
           } else {
             // Still generating, poll again
             setTimeout(poll, 2000);
           }
         } catch {
-          this.generating = false;
-          this.activeJobId = null;
+          delete this.activeJobs[sessionId];
+          if (this.currentSessionId === sessionId) {
+            this.generating = false;
+          }
         }
       };
       setTimeout(poll, 1000);
