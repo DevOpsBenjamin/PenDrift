@@ -11,8 +11,8 @@
         :key="chunk.id"
         :chunk="chunk"
         :isLast="i === chunks.length - 1"
-        @regenerate="(chunkId) => $emit('regenerate', chunkId)"
-        @delete="$emit('delete')"
+        @regenerate="(data) => $emit('regenerate', data)"
+        @delete="(chunkId) => $emit('delete', chunkId)"
         @edit="$emit('edit', $event)"
         @switchVersion="$emit('switchVersion', $event)"
       />

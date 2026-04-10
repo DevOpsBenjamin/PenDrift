@@ -161,8 +161,8 @@ async function handleGenerate({ directive, isKeyMoment }) {
   await narrativeStore.generate(sessionId, directive, isKeyMoment);
 }
 
-async function handleRegenerate(chunkId) {
-  await narrativeStore.regenerateChunk(sessionId, chunkId);
+async function handleRegenerate({ chunkId, directive }) {
+  await narrativeStore.regenerateChunk(sessionId, chunkId, directive);
 }
 
 async function handleEdit({ chunkId, narrative }) {
@@ -190,10 +190,8 @@ async function handleSwitchVersion({ chunkId, versionIndex }) {
   }
 }
 
-async function handleDelete() {
-  if (window.confirm('Delete the last generated chunk?')) {
-    await narrativeStore.deleteLastChunk(sessionId);
-  }
+async function handleDelete(chunkId) {
+  await narrativeStore.deleteVersion(sessionId, chunkId);
 }
 </script>
 

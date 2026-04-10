@@ -88,7 +88,7 @@ export const useNarrativeStore = defineStore('narrative', {
       }
     },
 
-    async regenerateChunk(sessionId, chunkId) {
+    async regenerateChunk(sessionId, chunkId, directive) {
       if (!this.currentChapterId) return;
       this.generating = true;
       this.error = null;
@@ -96,6 +96,7 @@ export const useNarrativeStore = defineStore('narrative', {
         const { jobId } = await generateApi.startRegeneration(sessionId, {
           chunkId,
           chapterId: this.currentChapterId,
+          directive,
         });
         this.activeJobs[sessionId] = jobId;
         this.pollJob(sessionId, jobId);
@@ -105,15 +106,17 @@ export const useNarrativeStore = defineStore('narrative', {
       }
     },
 
-    async deleteLastChunk(sessionId) {
-      if (!this.currentChapterId) return;
+    async deleteVersion(sessionId, chunkId) {
       this.error = null;
       try {
-        await generateApi.deleteLastChunk(sessionId, this.currentChapterId);
-        const chapterChunks = this.chunks.filter(c => c.chapterId === this.currentChapterId);
-        if (chapterChunks.length > 0) {
-          const lastId = chapterChunks[chapterChunks.length - 1].id;
-          this.chunks = this.chunks.filter(c => c.id !== lastId);
+        const chunk = this.chunks.find(c => c.id === chunkId);
+        const versionIndex = chunk?.activeVersion ?? 0;
+        const result = await generateApi.deleteChunkVersion(sessionId, chunkId, versionIndex);
+        if (result.deleted === 'chunk') {
+          this.chunks = this.chunks.filter(c => c.id !== chunkId);
+        } else if (result.chunk) {
+          chunk.versions = result.chunk.versions;
+          chunk.activeVersion = result.chunk.activeVersion;
         }
       } catch (err) {
         this.error = err.message;

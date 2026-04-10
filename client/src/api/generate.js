@@ -22,3 +22,8 @@ export const deleteLastChunk = (sessionId, chapterId) =>
   api.delete(`sessions/${sessionId}/chunks/last`, {
     searchParams: { chapterId },
   }).json();
+
+export const deleteChunkVersion = (sessionId, chunkId, versionIndex) =>
+  api.delete(`sessions/${sessionId}/chunks/${chunkId}/version`, {
+    json: { versionIndex },
+  }).json();

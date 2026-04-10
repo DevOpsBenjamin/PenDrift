@@ -234,6 +234,51 @@ router.put('/chunks/:chunkId', async (req, res) => {
   }
 });
 
+// Delete a version from a chunk (or the whole chunk if last version)
+router.delete('/chunks/:chunkId/version', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { chunkId } = req.params;
+    const { versionIndex } = req.body;
+
+    const { getChunks } = await import('../services/chunks.js');
+    const chunks = await getChunks(sessionId);
+    const chunk = chunks.find(c => c.id === chunkId);
+    if (!chunk) {
+      return res.status(404).json({ message: 'Chunk not found' });
+    }
+
+    // Migrate legacy if needed
+    if (!chunk.versions) {
+      // Legacy chunk with no versions — delete the whole chunk
+      const filtered = chunks.filter(c => c.id !== chunkId);
+      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'chunks.json'), filtered);
+      return res.json({ deleted: 'chunk' });
+    }
+
+    const idx = versionIndex ?? chunk.activeVersion ?? 0;
+
+    if (chunk.versions.length <= 1) {
+      // Last version — delete the whole chunk
+      const filtered = chunks.filter(c => c.id !== chunkId);
+      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'chunks.json'), filtered);
+      return res.json({ deleted: 'chunk' });
+    }
+
+    // Remove the version
+    chunk.versions.splice(idx, 1);
+    // Adjust activeVersion
+    if (chunk.activeVersion >= chunk.versions.length) {
+      chunk.activeVersion = chunk.versions.length - 1;
+    }
+
+    await writeJSON(path.join(SESSIONS_DIR, sessionId, 'chunks.json'), chunks);
+    res.json({ deleted: 'version', chunk });
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 // Switch active version of a chunk
 router.put('/chunks/:chunkId/version', async (req, res) => {
   try {
