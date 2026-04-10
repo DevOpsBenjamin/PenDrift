@@ -59,7 +59,7 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
     const chunks = await getChunksByChapter(sessionId, chapterId);
 
     const messages = buildMessages({ settings, characters, template, chunks, directive, importantFacts });
-    const { narrative, thinking } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
+    const { narrative, thinking, stats } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
 
     if (!narrative) {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: 'LLM returned empty narrative' });
@@ -70,6 +70,7 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
       chapterId,
       narrative,
       thinking: thinking || null,
+      stats: stats || null,
       directive,
       isKeyMoment: isKeyMoment || false,
     });

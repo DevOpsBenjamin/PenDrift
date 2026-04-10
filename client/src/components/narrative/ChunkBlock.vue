@@ -26,6 +26,14 @@
       </button>
     </div>
 
+    <!-- Chunk metadata line -->
+    <div class="flex items-center gap-3 mb-2 text-[10px] text-text-muted/40 font-ui select-none">
+      <span v-if="chunk.stats?.durationMs">{{ (chunk.stats.durationMs / 1000).toFixed(1) }}s</span>
+      <span v-if="chunk.stats?.completionTokens">{{ chunk.stats.completionTokens }} tok</span>
+      <span v-if="chunk.stats?.reasoningTokens" class="text-text-muted/30">{{ chunk.stats.reasoningTokens }} think</span>
+      <span v-if="chunk.editedAt" class="text-accent/30">edited</span>
+    </div>
+
     <!-- Thinking popup -->
     <ThinkingPanel
       v-if="showThinking"

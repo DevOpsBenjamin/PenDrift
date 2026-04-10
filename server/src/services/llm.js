@@ -99,7 +99,17 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
     ({ narrative, thinking } = stripThinkBlocks(rawContent, thinkBlockStart, thinkBlockEnd));
   }
 
-  const result = { narrative, thinking, raw: rawContent };
+  // Extract usage stats if available
+  const usage = data.usage || {};
+  const stats = {
+    durationMs,
+    promptTokens: usage.prompt_tokens || null,
+    completionTokens: usage.completion_tokens || null,
+    reasoningTokens: usage.completion_tokens_details?.reasoning_tokens || null,
+    totalTokens: usage.total_tokens || null,
+  };
+
+  const result = { narrative, thinking, raw: rawContent, stats };
 
   // Log the successful call
   if (sessionId) {
