@@ -1,17 +1,24 @@
 <template>
-  <div class="chapter-list">
-    <h3>Chapters</h3>
-    <ul>
+  <div class="p-3">
+    <h3 class="text-[11px] font-semibold uppercase tracking-widest text-text-muted mb-3">Chapters</h3>
+    <ul class="space-y-0.5">
       <li
         v-for="chapter in chapters"
         :key="chapter.id"
-        :class="{ active: chapter.id === currentChapterId }"
+        class="px-3 py-2 rounded-lg cursor-pointer text-sm transition-all duration-150"
+        :class="chapter.id === currentChapterId
+          ? 'bg-bg-surface text-text-primary font-medium'
+          : 'text-text-secondary hover:bg-bg-surface/50 hover:text-text-primary'"
         @click="$emit('select', chapter.id)"
       >
         {{ chapter.title }}
       </li>
     </ul>
-    <button class="btn-add" @click="$emit('create')">+ New Chapter</button>
+    <button
+      class="w-full mt-2 py-2 border border-dashed border-border rounded-lg text-text-muted text-xs
+             hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
+      @click="$emit('create')"
+    >+ New Chapter</button>
   </div>
 </template>
 
@@ -22,58 +29,3 @@ defineProps({
 });
 defineEmits(['select', 'create']);
 </script>
-
-<style scoped>
-.chapter-list {
-  padding: 1rem;
-}
-
-h3 {
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary);
-  margin-bottom: 0.75rem;
-}
-
-ul {
-  list-style: none;
-  padding: 0;
-}
-
-li {
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 0.9rem;
-  color: var(--color-text-secondary);
-  transition: background 0.15s;
-}
-
-li:hover {
-  background: var(--color-bg-surface);
-}
-
-li.active {
-  background: var(--color-bg-surface);
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.btn-add {
-  width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.4rem;
-  background: none;
-  border: 1px dashed var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 0.8rem;
-}
-
-.btn-add:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-</style>

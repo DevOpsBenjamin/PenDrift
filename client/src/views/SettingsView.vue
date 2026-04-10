@@ -1,84 +1,135 @@
 <template>
-  <div class="settings-page">
-    <div class="page-header">
-      <h1>Settings Presets</h1>
-      <button class="btn-new" @click="startNew">+ New Preset</button>
+  <div class="flex-1 max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 w-full">
+    <div class="flex items-center justify-between mb-6 sm:mb-8">
+      <h1 class="font-body text-2xl sm:text-3xl font-bold">Settings Presets</h1>
+      <button
+        class="px-4 py-2.5 bg-accent rounded-lg text-white text-sm font-semibold cursor-pointer
+               hover:bg-accent-hover transition-colors active:scale-95"
+        @click="startNew"
+      >+ New Preset</button>
     </div>
 
-    <div class="layout">
-      <aside class="preset-list">
+    <div class="flex flex-col md:flex-row gap-6">
+      <!-- Preset list -->
+      <aside class="md:w-56 md:min-w-56 flex md:flex-col gap-2 overflow-x-auto md:overflow-x-visible pb-2 md:pb-0">
         <div
           v-for="preset in store.presets"
           :key="preset.id"
-          class="preset-item"
-          :class="{ active: editing?.id === preset.id }"
+          class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm whitespace-nowrap
+                 transition-all duration-150"
+          :class="editing?.id === preset.id
+            ? 'bg-bg-surface text-text-primary font-medium'
+            : 'text-text-secondary hover:bg-bg-surface/50'"
           @click="edit(preset)"
         >
-          <span>{{ preset.name }}</span>
-          <button
-            v-if="preset.id !== 'default'"
-            class="btn-delete"
-            @click.stop="remove(preset.id)"
-          >x</button>
+          <span class="truncate">{{ preset.name }}</span>
         </div>
       </aside>
 
-      <div v-if="editing" class="editor">
-        <div class="field">
-          <label>ID (unique, no spaces)</label>
-          <input v-model="editing.id" :disabled="!isNew" />
-        </div>
-        <div class="field">
-          <label>Name</label>
-          <input v-model="editing.name" />
-        </div>
-        <div class="field">
-          <label>API Endpoint</label>
-          <input v-model="editing.apiEndpoint" placeholder="http://localhost:11434/v1/chat/completions" />
-        </div>
-        <div class="field">
-          <label>Model</label>
-          <input v-model="editing.model" placeholder="qwen2.5:14b" />
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Temperature</label>
-            <input v-model.number="editing.temperature" type="number" step="0.1" min="0" max="2" />
+      <!-- Editor -->
+      <div v-if="editing" class="flex-1 flex flex-col gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">ID</label>
+            <input v-model="editing.id" :disabled="!isNew"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors disabled:opacity-40" />
           </div>
-          <div class="field">
-            <label>Max Tokens</label>
-            <input v-model.number="editing.maxTokens" type="number" step="256" min="256" />
-          </div>
-          <div class="field">
-            <label>Context Size</label>
-            <input v-model.number="editing.contextSize" type="number" step="1024" min="1024" />
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Name</label>
+            <input v-model="editing.name"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
           </div>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>Character Update Interval (chunks)</label>
-            <input v-model.number="editing.chunkUpdateInterval" type="number" min="1" />
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">API Endpoint</label>
+          <input v-model="editing.apiEndpoint" placeholder="http://localhost:11434/v1/chat/completions"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Model</label>
+          <input v-model="editing.model" placeholder="qwen2.5:14b"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Temp</label>
+            <input v-model.number="editing.temperature" type="number" step="0.1" min="0" max="2"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
           </div>
-          <div class="field">
-            <label>Think Block Start</label>
-            <input v-model="editing.thinkBlockStart" />
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Max Tokens</label>
+            <input v-model.number="editing.maxTokens" type="number" step="256" min="256"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
           </div>
-          <div class="field">
-            <label>Think Block End</label>
-            <input v-model="editing.thinkBlockEnd" />
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Context</label>
+            <input v-model.number="editing.contextSize" type="number" step="1024" min="1024"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
           </div>
         </div>
-        <div class="field">
-          <label>System Prompt</label>
-          <textarea v-model="editing.systemPrompt" rows="8"></textarea>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Update Interval</label>
+            <input v-model.number="editing.chunkUpdateInterval" type="number" min="1"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Think Start</label>
+            <input v-model="editing.thinkBlockStart"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Think End</label>
+            <input v-model="editing.thinkBlockEnd"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
         </div>
-        <div class="actions">
-          <button class="btn-cancel" @click="editing = null">Cancel</button>
-          <button class="btn-save" @click="save">Save</button>
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">System Prompt</label>
+          <textarea v-model="editing.systemPrompt" rows="6"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   font-ui resize-y min-h-32 focus:outline-none focus:border-accent transition-colors"></textarea>
+        </div>
+
+        <div class="flex justify-between pt-2">
+          <button
+            v-if="!isNew && editing.id !== 'default'"
+            class="px-4 py-2 border border-error/30 rounded-lg text-error text-sm
+                   hover:bg-error/10 transition-all cursor-pointer"
+            @click="remove(editing.id)"
+          >Delete</button>
+          <span v-else></span>
+          <div class="flex gap-3">
+            <button
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
+              @click="editing = null"
+            >Cancel</button>
+            <button
+              class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
+                     hover:bg-accent-hover transition-colors cursor-pointer active:scale-95"
+              @click="save"
+            >Save</button>
+          </div>
         </div>
       </div>
 
-      <div v-else class="empty-editor">
+      <div v-else class="flex-1 flex items-center justify-center text-text-muted italic text-sm py-20">
         Select a preset to edit or create a new one.
       </div>
     </div>
@@ -133,170 +184,3 @@ async function remove(id) {
   }
 }
 </script>
-
-<style scoped>
-.settings-page {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-h1 {
-  font-family: var(--font-body);
-  font-size: 1.8rem;
-}
-
-.btn-new {
-  padding: 0.6rem 1.25rem;
-  background: var(--color-accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-new:hover {
-  background: var(--color-accent-hover);
-}
-
-.layout {
-  display: flex;
-  gap: 1.5rem;
-}
-
-.preset-list {
-  width: 220px;
-  min-width: 220px;
-}
-
-.preset-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.6rem 0.75rem;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-  font-size: 0.9rem;
-  transition: background 0.15s;
-}
-
-.preset-item:hover {
-  background: var(--color-bg-surface);
-}
-
-.preset-item.active {
-  background: var(--color-bg-surface);
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.btn-delete {
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.btn-delete:hover {
-  color: var(--color-accent);
-}
-
-.editor {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.empty-editor {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-secondary);
-  font-style: italic;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.field label {
-  font-size: 0.8rem;
-  color: var(--color-text-secondary);
-}
-
-.field input, .field textarea {
-  padding: 0.6rem 0.75rem;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-primary);
-  font-size: 0.9rem;
-  font-family: var(--font-ui);
-}
-
-.field input:focus, .field textarea:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.field input:disabled {
-  opacity: 0.5;
-}
-
-.field textarea {
-  resize: vertical;
-  min-height: 120px;
-}
-
-.field-row {
-  display: flex;
-  gap: 1rem;
-}
-
-.field-row .field {
-  flex: 1;
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-}
-
-.btn-cancel {
-  padding: 0.5rem 1rem;
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.btn-save {
-  padding: 0.5rem 1.25rem;
-  background: var(--color-accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-save:hover {
-  background: var(--color-accent-hover);
-}
-</style>

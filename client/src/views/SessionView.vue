@@ -1,6 +1,32 @@
 <template>
-  <div class="session-view">
-    <aside class="sidebar">
+  <div class="flex flex-1 h-[calc(100dvh-49px)] relative overflow-hidden">
+    <!-- Mobile sidebar toggle -->
+    <button
+      class="md:hidden fixed bottom-20 left-3 z-30 w-10 h-10 bg-bg-elevated border border-border rounded-full
+             flex items-center justify-center text-text-secondary hover:text-text-primary shadow-lg transition-all"
+      @click="sidebarOpen = !sidebarOpen"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" />
+      </svg>
+    </button>
+
+    <!-- Sidebar overlay (mobile) -->
+    <Transition name="fade">
+      <div
+        v-if="sidebarOpen"
+        class="md:hidden fixed inset-0 bg-bg-overlay z-30"
+        @click="sidebarOpen = false"
+      ></div>
+    </Transition>
+
+    <!-- Sidebar -->
+    <aside
+      class="fixed md:relative z-40 md:z-auto h-full w-72 md:w-60 bg-bg-secondary border-r border-border-subtle
+             flex flex-col overflow-y-auto transition-transform duration-300 ease-out
+             md:translate-x-0"
+      :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+    >
       <ChapterList
         :chapters="sessionStore.currentSession?.chapters || []"
         :currentChapterId="narrativeStore.currentChapterId"
@@ -13,7 +39,8 @@
       />
     </aside>
 
-    <div class="main-area">
+    <!-- Main content -->
+    <div class="flex-1 flex flex-col min-w-0">
       <NarrativeDisplay
         :chunks="narrativeStore.currentChapterChunks"
         :generating="narrativeStore.generating"
@@ -26,14 +53,22 @@
       />
     </div>
 
-    <div v-if="narrativeStore.error" class="error-toast" @click="narrativeStore.error = null">
-      {{ narrativeStore.error }}
-    </div>
+    <!-- Error toast -->
+    <Transition name="toast">
+      <div
+        v-if="narrativeStore.error"
+        class="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-error text-white px-5 py-3 rounded-xl
+               text-sm shadow-lg shadow-error/20 cursor-pointer max-w-lg"
+        @click="narrativeStore.error = null"
+      >
+        {{ narrativeStore.error }}
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
-import { onMounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useSessionStore } from '../stores/session.js';
 import { useNarrativeStore } from '../stores/narrative.js';
@@ -48,6 +83,7 @@ const sessionStore = useSessionStore();
 const narrativeStore = useNarrativeStore();
 
 const sessionId = route.params.id;
+const sidebarOpen = ref(false);
 
 onMounted(async () => {
   await sessionStore.loadSession(sessionId);
@@ -62,6 +98,7 @@ onMounted(async () => {
 
 async function switchChapter(chapterId) {
   await narrativeStore.loadChapter(sessionId, chapterId);
+  sidebarOpen.value = false;
 }
 
 async function createChapter() {
@@ -72,6 +109,7 @@ async function createChapter() {
     sessionStore.currentSession.chapters.push(chapter);
     narrativeStore.setChapters(sessionStore.currentSession.chapters);
     await narrativeStore.loadChapter(sessionId, chapter.id);
+    sidebarOpen.value = false;
   } catch (err) {
     narrativeStore.error = err.message;
   }
@@ -93,41 +131,27 @@ async function handleDelete() {
 </script>
 
 <style scoped>
-.session-view {
-  display: flex;
-  height: calc(100vh - 49px);
-  position: relative;
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
-.sidebar {
-  width: 260px;
-  min-width: 260px;
-  background: var(--color-bg-secondary);
-  border-right: 1px solid var(--color-border);
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+.toast-enter-active {
+  transition: all 0.3s var(--ease-spring);
 }
-
-.main-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+.toast-leave-active {
+  transition: all 0.2s ease;
 }
-
-.error-toast {
-  position: fixed;
-  bottom: 5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #c0392b;
-  color: white;
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  cursor: pointer;
-  z-index: 50;
-  max-width: 600px;
+.toast-enter-from {
+  transform: translateX(-50%) translateY(20px);
+  opacity: 0;
+}
+.toast-leave-to {
+  transform: translateX(-50%) translateY(-10px);
+  opacity: 0;
 }
 </style>

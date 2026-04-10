@@ -1,23 +1,25 @@
 <template>
-  <div class="narrative-display" ref="container">
-    <div v-if="chunks.length === 0" class="empty-narrative">
-      <p>The story hasn't begun yet.</p>
-      <p>Write a directive below to start.</p>
-    </div>
+  <div class="flex-1 overflow-y-auto px-4 sm:px-8 lg:px-12 py-6 sm:py-10" ref="container">
+    <div class="max-w-2xl mx-auto">
+      <div v-if="chunks.length === 0" class="text-center py-20 sm:py-32">
+        <p class="text-text-secondary text-lg italic">The story hasn't begun yet.</p>
+        <p class="text-text-muted text-sm mt-2">Write a directive below to start.</p>
+      </div>
 
-    <ChunkBlock
-      v-for="(chunk, i) in chunks"
-      :key="chunk.id"
-      :chunk="chunk"
-      :isLast="i === chunks.length - 1"
-      @regenerate="$emit('regenerate')"
-      @delete="$emit('delete')"
-    />
+      <ChunkBlock
+        v-for="(chunk, i) in chunks"
+        :key="chunk.id"
+        :chunk="chunk"
+        :isLast="i === chunks.length - 1"
+        @regenerate="$emit('regenerate')"
+        @delete="$emit('delete')"
+      />
 
-    <div v-if="generating" class="generating-indicator">
-      <span class="dot"></span>
-      <span class="dot"></span>
-      <span class="dot"></span>
+      <div v-if="generating" class="flex gap-1.5 py-6 justify-center">
+        <span class="w-2 h-2 bg-accent rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+        <span class="w-2 h-2 bg-accent rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+        <span class="w-2 h-2 bg-accent rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+      </div>
     </div>
   </div>
 </template>
@@ -42,44 +44,3 @@ watch(() => props.chunks.length, async () => {
   }
 });
 </script>
-
-<style scoped>
-.narrative-display {
-  flex: 1;
-  overflow-y: auto;
-  padding: 2rem 3rem;
-  max-width: 800px;
-  margin: 0 auto;
-}
-
-.empty-narrative {
-  text-align: center;
-  color: var(--color-text-secondary);
-  padding: 4rem 0;
-  line-height: 2;
-  font-style: italic;
-}
-
-.generating-indicator {
-  display: flex;
-  gap: 0.4rem;
-  padding: 1rem 0;
-  justify-content: center;
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  background: var(--color-accent);
-  border-radius: 50%;
-  animation: pulse 1.4s infinite ease-in-out;
-}
-
-.dot:nth-child(2) { animation-delay: 0.2s; }
-.dot:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes pulse {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1); opacity: 1; }
-}
-</style>

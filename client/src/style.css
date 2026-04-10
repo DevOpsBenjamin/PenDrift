@@ -1,21 +1,71 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-primary: #1a1a2e;
-  --color-bg-secondary: #16213e;
-  --color-bg-surface: #0f3460;
-  --color-text-primary: #e0e0e0;
-  --color-text-secondary: #a0a0b0;
+  /* Background layers */
+  --color-bg-base: #0c0c14;
+  --color-bg-primary: #12121e;
+  --color-bg-secondary: #1a1a2e;
+  --color-bg-surface: #222240;
+  --color-bg-elevated: #2a2a4a;
+  --color-bg-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Text */
+  --color-text-primary: #ececf1;
+  --color-text-secondary: #8e8ea0;
+  --color-text-muted: #565669;
+
+  /* Accent */
   --color-accent: #e94560;
   --color-accent-hover: #ff6b81;
-  --color-border: #2a2a4a;
-  --font-body: 'Georgia', serif;
-  --font-ui: system-ui, -apple-system, sans-serif;
+  --color-accent-soft: rgba(233, 69, 96, 0.12);
+
+  /* Borders */
+  --color-border: #2a2a42;
+  --color-border-subtle: #1f1f36;
+
+  /* Semantic */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+
+  /* Fonts */
+  --font-body: 'Georgia', 'Palatino Linotype', 'Book Antiqua', serif;
+  --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Transitions */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+/* Base resets */
 body {
   font-family: var(--font-ui);
-  background-color: var(--color-bg-primary);
+  background-color: var(--color-bg-base);
   color: var(--color-text-primary);
-  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-bg-elevated);
+}
+
+/* Focus visible for accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }

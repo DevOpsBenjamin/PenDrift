@@ -1,88 +1,170 @@
 <template>
-  <div class="templates-page">
-    <div class="page-header">
-      <h1>Templates</h1>
-      <button class="btn-new" @click="startNew">+ New Template</button>
+  <div class="flex-1 max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 w-full">
+    <div class="flex items-center justify-between mb-6 sm:mb-8">
+      <h1 class="font-body text-2xl sm:text-3xl font-bold">Templates</h1>
+      <button
+        class="px-4 py-2.5 bg-accent rounded-lg text-white text-sm font-semibold cursor-pointer
+               hover:bg-accent-hover transition-colors active:scale-95"
+        @click="startNew"
+      >+ New Template</button>
     </div>
 
-    <div class="layout">
-      <aside class="template-list">
+    <div class="flex flex-col md:flex-row gap-6">
+      <!-- Template list -->
+      <aside class="md:w-60 md:min-w-60 flex md:flex-col gap-2 overflow-x-auto md:overflow-x-visible pb-2 md:pb-0">
         <div
           v-for="tpl in store.templates"
           :key="tpl.id"
-          class="template-item"
-          :class="{ active: editing?.id === tpl.id }"
+          class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm whitespace-nowrap
+                 transition-all duration-150"
+          :class="editing?.id === tpl.id
+            ? 'bg-bg-surface text-text-primary font-medium'
+            : 'text-text-secondary hover:bg-bg-surface/50'"
           @click="edit(tpl)"
         >
-          <span>{{ tpl.name }}</span>
-          <button class="btn-delete" @click.stop="remove(tpl.id)">x</button>
+          <span class="truncate">{{ tpl.name }}</span>
         </div>
       </aside>
 
-      <div v-if="editing" class="editor">
-        <div class="field">
-          <label>ID (unique, no spaces)</label>
-          <input v-model="editing.id" :disabled="!isNew" />
-        </div>
-        <div class="field">
-          <label>Name</label>
-          <input v-model="editing.name" />
-        </div>
-        <div class="field">
-          <label>Description</label>
-          <textarea v-model="editing.description" rows="2"></textarea>
-        </div>
-        <div class="field">
-          <label>Scenario</label>
-          <textarea v-model="editing.scenario" rows="4"></textarea>
-        </div>
-        <div class="field">
-          <label>Style Instructions (added to system prompt)</label>
-          <textarea v-model="editing.systemPromptAdditions" rows="4"></textarea>
+      <!-- Editor -->
+      <div v-if="editing" class="flex-1 flex flex-col gap-4 max-h-[calc(100dvh-200px)] overflow-y-auto pr-1">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">ID</label>
+            <input v-model="editing.id" :disabled="!isNew"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors disabled:opacity-40" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Name</label>
+            <input v-model="editing.name"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
         </div>
 
-        <div class="section">
-          <h3>
-            Characters
-            <button class="btn-add-small" @click="addCharacter">+ Add</button>
-          </h3>
-          <div v-for="(char, i) in editing.characters" :key="i" class="character-edit">
-            <div class="field-row">
-              <div class="field" style="flex: 1">
-                <label>Name</label>
-                <input v-model="char.name" />
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Description</label>
+          <textarea v-model="editing.description" rows="2"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Scenario</label>
+          <textarea v-model="editing.scenario" rows="3"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Style Instructions</label>
+          <textarea v-model="editing.systemPromptAdditions" rows="3"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+        </div>
+
+        <!-- Characters section -->
+        <div class="pt-4 border-t border-border-subtle">
+          <div class="flex items-center gap-3 mb-3">
+            <h3 class="text-sm font-semibold">Characters</h3>
+            <button
+              class="text-xs px-2.5 py-1 border border-dashed border-border rounded-md text-text-muted
+                     hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
+              @click="addCharacter"
+            >+ Add</button>
+          </div>
+
+          <div
+            v-for="(char, i) in editing.characters"
+            :key="i"
+            class="bg-bg-secondary rounded-xl p-4 mb-3 flex flex-col gap-3 border border-border-subtle"
+          >
+            <div class="flex gap-3 items-end">
+              <div class="flex-1 flex flex-col gap-1.5">
+                <label class="text-xs text-text-muted">Name</label>
+                <input v-model="char.name"
+                  class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                         focus:outline-none focus:border-accent transition-colors" />
               </div>
-              <button class="btn-remove" @click="editing.characters.splice(i, 1)">x</button>
+              <button
+                class="text-text-muted hover:text-accent transition-colors p-1 mb-1"
+                @click="editing.characters.splice(i, 1)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-            <div class="field">
-              <label>Description</label>
-              <textarea v-model="char.description" rows="3"></textarea>
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs text-text-muted">Description</label>
+              <textarea v-model="char.description" rows="3"
+                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
             </div>
-            <div class="field">
-              <label>Initial State</label>
-              <input v-model="char.initialState" />
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs text-text-muted">Initial State</label>
+              <input v-model="char.initialState"
+                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                       focus:outline-none focus:border-accent transition-colors" />
             </div>
           </div>
         </div>
 
-        <div class="section">
-          <h3>
-            Masked Intents
-            <button class="btn-add-small" @click="editing.maskedIntents.push('')">+ Add</button>
-          </h3>
-          <div v-for="(_, i) in editing.maskedIntents" :key="i" class="intent-row">
-            <textarea v-model="editing.maskedIntents[i]" rows="2"></textarea>
-            <button class="btn-remove" @click="editing.maskedIntents.splice(i, 1)">x</button>
+        <!-- Masked Intents section -->
+        <div class="pt-4 border-t border-border-subtle">
+          <div class="flex items-center gap-3 mb-3">
+            <h3 class="text-sm font-semibold">Masked Intents</h3>
+            <button
+              class="text-xs px-2.5 py-1 border border-dashed border-border rounded-md text-text-muted
+                     hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
+              @click="editing.maskedIntents.push('')"
+            >+ Add</button>
+          </div>
+
+          <div
+            v-for="(_, i) in editing.maskedIntents"
+            :key="i"
+            class="flex gap-2 items-start mb-2"
+          >
+            <textarea v-model="editing.maskedIntents[i]" rows="2"
+              class="flex-1 px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            <button
+              class="text-text-muted hover:text-accent transition-colors p-1 mt-1.5"
+              @click="editing.maskedIntents.splice(i, 1)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
 
-        <div class="actions">
-          <button class="btn-cancel" @click="editing = null">Cancel</button>
-          <button class="btn-save" @click="save">Save</button>
+        <div class="flex justify-between pt-4 pb-2 sticky bottom-0 bg-bg-base/80 backdrop-blur-sm">
+          <button
+            v-if="!isNew"
+            class="px-4 py-2 border border-error/30 rounded-lg text-error text-sm
+                   hover:bg-error/10 transition-all cursor-pointer"
+            @click="remove(editing.id)"
+          >Delete</button>
+          <span v-else></span>
+          <div class="flex gap-3">
+            <button
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
+              @click="editing = null"
+            >Cancel</button>
+            <button
+              class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
+                     hover:bg-accent-hover transition-colors cursor-pointer active:scale-95"
+              @click="save"
+            >Save</button>
+          </div>
         </div>
       </div>
 
-      <div v-else class="empty-editor">
+      <div v-else class="flex-1 flex items-center justify-center text-text-muted italic text-sm py-20">
         Select a template to edit or create a new one.
       </div>
     </div>
@@ -125,7 +207,6 @@ function addCharacter() {
 
 async function save() {
   if (!editing.value.id || !editing.value.name) return;
-  // Filter empty masked intents
   editing.value.maskedIntents = editing.value.maskedIntents.filter(i => i.trim());
   const saved = await store.saveTemplate(editing.value);
   if (saved) {
@@ -141,245 +222,3 @@ async function remove(id) {
   }
 }
 </script>
-
-<style scoped>
-.templates-page {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-h1 {
-  font-family: var(--font-body);
-  font-size: 1.8rem;
-}
-
-.btn-new {
-  padding: 0.6rem 1.25rem;
-  background: var(--color-accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-new:hover {
-  background: var(--color-accent-hover);
-}
-
-.layout {
-  display: flex;
-  gap: 1.5rem;
-}
-
-.template-list {
-  width: 240px;
-  min-width: 240px;
-}
-
-.template-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.6rem 0.75rem;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-  font-size: 0.9rem;
-  transition: background 0.15s;
-}
-
-.template-item:hover {
-  background: var(--color-bg-surface);
-}
-
-.template-item.active {
-  background: var(--color-bg-surface);
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.btn-delete {
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.btn-delete:hover {
-  color: var(--color-accent);
-}
-
-.editor {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  max-height: calc(100vh - 150px);
-  overflow-y: auto;
-  padding-right: 0.5rem;
-}
-
-.empty-editor {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-secondary);
-  font-style: italic;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.field label {
-  font-size: 0.8rem;
-  color: var(--color-text-secondary);
-}
-
-.field input, .field textarea {
-  padding: 0.6rem 0.75rem;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-primary);
-  font-size: 0.9rem;
-  font-family: var(--font-ui);
-}
-
-.field input:focus, .field textarea:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.field input:disabled {
-  opacity: 0.5;
-}
-
-.field textarea {
-  resize: vertical;
-}
-
-.field-row {
-  display: flex;
-  gap: 0.75rem;
-  align-items: flex-end;
-}
-
-.section {
-  border-top: 1px solid var(--color-border);
-  padding-top: 1rem;
-}
-
-.section h3 {
-  font-size: 0.95rem;
-  margin-bottom: 0.75rem;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.btn-add-small {
-  font-size: 0.75rem;
-  padding: 0.2rem 0.6rem;
-  background: none;
-  border: 1px dashed var(--color-border);
-  border-radius: 4px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.btn-add-small:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-.character-edit {
-  background: var(--color-bg-secondary);
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.intent-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
-  margin-bottom: 0.5rem;
-}
-
-.intent-row textarea {
-  flex: 1;
-  padding: 0.6rem 0.75rem;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-primary);
-  font-size: 0.9rem;
-  font-family: var(--font-ui);
-  resize: vertical;
-}
-
-.intent-row textarea:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.btn-remove {
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 1.1rem;
-  padding: 0.25rem;
-}
-
-.btn-remove:hover {
-  color: var(--color-accent);
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-  padding-bottom: 1rem;
-}
-
-.btn-cancel {
-  padding: 0.5rem 1rem;
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.btn-save {
-  padding: 0.5rem 1.25rem;
-  background: var(--color-accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-save:hover {
-  background: var(--color-accent-hover);
-}
-</style>

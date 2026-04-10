@@ -1,19 +1,25 @@
 <template>
-  <div class="home">
-    <main class="content">
-      <div class="content-header">
-        <h1>Sessions</h1>
-        <button class="btn-new" @click="showCreateModal = true">+ New Session</button>
+  <div class="home flex-1">
+    <main class="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
+      <div class="flex items-center justify-between mb-6 sm:mb-8">
+        <h1 class="font-body text-2xl sm:text-3xl font-bold">Sessions</h1>
+        <button
+          class="px-4 py-2.5 bg-accent rounded-lg text-white text-sm font-semibold cursor-pointer
+                 hover:bg-accent-hover transition-colors active:scale-95"
+          @click="showCreateModal = true"
+        >+ New Session</button>
       </div>
 
-      <div v-if="store.loading" class="loading">Loading...</div>
-
-      <div v-else-if="store.sessions.length === 0" class="empty">
-        <p>No sessions yet.</p>
-        <p>Create one to start writing.</p>
+      <div v-if="store.loading" class="text-center text-text-secondary py-16">
+        <div class="inline-block w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
       </div>
 
-      <div v-else class="session-grid">
+      <div v-else-if="store.sessions.length === 0" class="text-center text-text-secondary py-20 space-y-2">
+        <p class="text-lg">No sessions yet</p>
+        <p class="text-sm text-text-muted">Create one to start writing.</p>
+      </div>
+
+      <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <SessionCard
           v-for="session in store.sessions"
           :key="session.id"
@@ -66,57 +72,3 @@ async function confirmDelete(id) {
   }
 }
 </script>
-
-<style scoped>
-.content {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
-.content-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-h1 {
-  font-family: var(--font-body);
-  font-size: 1.8rem;
-}
-
-.btn-new {
-  padding: 0.6rem 1.25rem;
-  background: var(--color-accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.btn-new:hover {
-  background: var(--color-accent-hover);
-}
-
-.loading {
-  text-align: center;
-  color: var(--color-text-secondary);
-  padding: 3rem;
-}
-
-.empty {
-  text-align: center;
-  color: var(--color-text-secondary);
-  padding: 4rem 0;
-  line-height: 2;
-}
-
-.session-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
-}
-</style>

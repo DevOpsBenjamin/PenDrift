@@ -1,5 +1,5 @@
 <template>
-  <div id="pendrift">
+  <div id="pendrift" class="min-h-dvh flex flex-col">
     <AppHeader />
     <RouterView />
   </div>
@@ -9,9 +9,3 @@
 import { RouterView } from 'vue-router';
 import AppHeader from './components/layout/AppHeader.vue';
 </script>
-
-<style>
-#pendrift {
-  min-height: 100vh;
-}
-</style>

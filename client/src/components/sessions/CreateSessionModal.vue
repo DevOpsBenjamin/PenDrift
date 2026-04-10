@@ -1,22 +1,46 @@
 <template>
-  <div class="modal-overlay" @click.self="$emit('close')">
-    <div class="modal">
-      <h2>New Session</h2>
+  <Teleport to="body">
+    <div class="fixed inset-0 bg-bg-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="$emit('close')">
+      <div class="bg-bg-secondary border border-border rounded-2xl p-6 w-full max-w-md flex flex-col gap-4 shadow-2xl">
+        <h2 class="text-lg font-semibold">New Session</h2>
 
-      <label>Template</label>
-      <select v-model="selectedTemplate">
-        <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
-      </select>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-secondary font-medium uppercase tracking-wider">Template</label>
+          <select
+            v-model="selectedTemplate"
+            class="px-3 py-2.5 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   focus:outline-none focus:border-accent transition-colors"
+          >
+            <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+          </select>
+        </div>
 
-      <label>Title (optional)</label>
-      <input v-model="title" placeholder="Leave empty to use template name" />
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-secondary font-medium uppercase tracking-wider">Title (optional)</label>
+          <input
+            v-model="title"
+            placeholder="Leave empty to use template name"
+            class="px-3 py-2.5 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
+          />
+        </div>
 
-      <div class="actions">
-        <button class="btn-cancel" @click="$emit('close')">Cancel</button>
-        <button class="btn-create" @click="create" :disabled="!selectedTemplate">Create</button>
+        <div class="flex justify-end gap-3 mt-2">
+          <button
+            class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm cursor-pointer
+                   hover:bg-bg-surface hover:text-text-primary transition-all"
+            @click="$emit('close')"
+          >Cancel</button>
+          <button
+            class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold cursor-pointer
+                   hover:bg-accent-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            @click="create"
+            :disabled="!selectedTemplate"
+          >Create</button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -35,85 +59,3 @@ function create() {
   });
 }
 </script>
-
-<style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.modal {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 2rem;
-  width: 400px;
-  max-width: 90vw;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-h2 {
-  margin-bottom: 0.5rem;
-}
-
-label {
-  font-size: 0.85rem;
-  color: var(--color-text-secondary);
-}
-
-select, input {
-  padding: 0.6rem 0.75rem;
-  background: var(--color-bg-primary);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-primary);
-  font-size: 0.95rem;
-}
-
-select:focus, input:focus {
-  outline: none;
-  border-color: var(--color-accent);
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-}
-
-.btn-cancel {
-  padding: 0.5rem 1rem;
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-
-.btn-create {
-  padding: 0.5rem 1.25rem;
-  background: var(--color-accent);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.btn-create:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-create:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-</style>

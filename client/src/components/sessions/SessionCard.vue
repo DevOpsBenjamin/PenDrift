@@ -1,10 +1,22 @@
 <template>
-  <div class="session-card" @click="$emit('select', session.id)">
-    <div class="card-header">
-      <h3>{{ session.title }}</h3>
-      <button class="delete-btn" @click.stop="$emit('delete', session.id)" title="Delete session">x</button>
+  <div
+    class="group relative bg-bg-secondary border border-border rounded-xl p-5 cursor-pointer
+           transition-all duration-200 hover:border-accent/40 hover:shadow-lg hover:shadow-accent/5 hover:-translate-y-0.5"
+    @click="$emit('select', session.id)"
+  >
+    <div class="flex justify-between items-start mb-3">
+      <h3 class="text-base font-semibold leading-tight pr-4">{{ session.title }}</h3>
+      <button
+        class="opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-accent p-1 -m-1"
+        @click.stop="$emit('delete', session.id)"
+        title="Delete session"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
     </div>
-    <div class="card-meta">
+    <div class="flex justify-between text-xs text-text-muted">
       <span>{{ session.chapters?.length || 0 }} chapter(s)</span>
       <span>{{ formatDate(session.updatedAt) }}</span>
     </div>
@@ -21,51 +33,3 @@ function formatDate(iso) {
   });
 }
 </script>
-
-<style scoped>
-.session-card {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 1.25rem;
-  cursor: pointer;
-  transition: border-color 0.2s, transform 0.1s;
-}
-
-.session-card:hover {
-  border-color: var(--color-accent);
-  transform: translateY(-1px);
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-}
-
-h3 {
-  font-size: 1.1rem;
-  margin-bottom: 0.5rem;
-}
-
-.delete-btn {
-  background: none;
-  border: none;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 0 0.25rem;
-  line-height: 1;
-}
-
-.delete-btn:hover {
-  color: var(--color-accent);
-}
-
-.card-meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8rem;
-  color: var(--color-text-secondary);
-}
-</style>
