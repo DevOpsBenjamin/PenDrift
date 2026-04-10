@@ -32,6 +32,13 @@ export async function createSession({ templateId, title, settingsPresetId }) {
   const sessionId = uuidv4();
   const firstChapterId = uuidv4();
   const now = new Date().toISOString();
+  const vars = template.variables || {};
+
+  // Resolve {{variables}} in text
+  const resolve = (text) => {
+    if (!text) return text;
+    return text.replace(/\{\{(\w+)\}\}/g, (match, key) => vars[key] !== undefined ? vars[key] : match);
+  };
 
   const session = {
     id: sessionId,
@@ -46,14 +53,27 @@ export async function createSession({ templateId, title, settingsPresetId }) {
     updatedAt: now,
   };
 
-  // Initialize character sheets from template
+  // Initialize character sheets from template — NPC characters
   const characters = (template.characters || []).map(c => ({
-    name: c.name,
-    currentState: c.initialState || '',
+    name: resolve(c.name),
+    isUser: false,
+    currentState: resolve(c.initialState || ''),
     traits: [],
     keyEvents: [],
     lastUpdated: now,
   }));
+
+  // User character sheet (if defined in template)
+  if (template.userCharacter) {
+    characters.unshift({
+      name: resolve(template.userCharacter.name || vars.user || 'User'),
+      isUser: true,
+      currentState: resolve(template.userCharacter.initialState || ''),
+      traits: [],
+      keyEvents: [],
+      lastUpdated: now,
+    });
+  }
 
   await ensureDir(path.join(sessionDir(sessionId), 'assets', 'images'));
   await ensureDir(path.join(sessionDir(sessionId), 'assets', 'audio'));

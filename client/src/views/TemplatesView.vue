@@ -73,6 +73,60 @@
                    resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
         </div>
 
+        <!-- Variables section -->
+        <div class="pt-4 border-t border-border-subtle">
+          <div class="flex items-center gap-3 mb-1">
+            <h3 class="text-sm font-semibold">Variables</h3>
+            <button
+              class="text-xs px-2.5 py-1 border border-dashed border-border rounded-md text-text-muted
+                     hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
+              @click="addVariable"
+            >+ Add</button>
+          </div>
+          <p class="text-xs text-text-muted mb-3">Use &#123;&#123;key&#125;&#125; anywhere in the template. Values are resolved before sending to the LLM.</p>
+
+          <div
+            v-for="(val, key) in editing.variables"
+            :key="key"
+            class="flex gap-2 items-center mb-2"
+          >
+            <span class="text-xs text-text-muted font-mono w-28 shrink-0 truncate">&#123;&#123;{{ key }}&#125;&#125;</span>
+            <input
+              :value="val"
+              @input="editing.variables[key] = $event.target.value"
+              class="flex-1 px-3 py-1.5 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors"
+            />
+            <button
+              class="text-text-muted hover:text-accent transition-colors p-1"
+              @click="deleteVariable(key)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- User character -->
+        <div class="pt-4 border-t border-border-subtle">
+          <h3 class="text-sm font-semibold mb-3">User Character</h3>
+          <div class="bg-bg-secondary rounded-xl p-4 flex flex-col gap-3 border border-accent-soft">
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs text-text-muted">Description</label>
+              <textarea v-model="editing.userCharacter.description" rows="2"
+                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs text-text-muted">Initial State</label>
+              <input v-model="editing.userCharacter.initialState"
+                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                       focus:outline-none focus:border-accent transition-colors" />
+            </div>
+          </div>
+        </div>
+
         <!-- Characters section -->
         <div class="pt-4 border-t border-border-subtle">
           <div class="flex items-center gap-3 mb-3">
@@ -192,8 +246,10 @@ onMounted(() => store.fetchTemplates());
 
 function edit(tpl) {
   editing.value = JSON.parse(JSON.stringify(tpl));
+  if (!editing.value.variables) editing.value.variables = {};
   if (!editing.value.characters) editing.value.characters = [];
   if (!editing.value.maskedIntents) editing.value.maskedIntents = [];
+  if (!editing.value.userCharacter) editing.value.userCharacter = { name: '{{user}}', description: '', initialState: '' };
   isNew.value = false;
 }
 
@@ -201,8 +257,10 @@ function duplicate(tpl) {
   const copy = JSON.parse(JSON.stringify(tpl));
   copy.id = copy.id + '_copy';
   copy.name = copy.name + ' (copy)';
+  if (!copy.variables) copy.variables = {};
   if (!copy.characters) copy.characters = [];
   if (!copy.maskedIntents) copy.maskedIntents = [];
+  if (!copy.userCharacter) copy.userCharacter = { name: '{{user}}', description: '', initialState: '' };
   editing.value = copy;
   isNew.value = true;
 }
@@ -215,9 +273,23 @@ function startNew() {
     description: '',
     scenario: '',
     systemPromptAdditions: '',
+    variables: { user: '' },
+    userCharacter: { name: '{{user}}', description: '', initialState: '' },
     characters: [],
     maskedIntents: [],
   };
+}
+
+function addVariable() {
+  const key = window.prompt('Variable name (no spaces, e.g. "city"):');
+  if (!key || !key.trim()) return;
+  const clean = key.trim().replace(/\s+/g, '_');
+  if (editing.value.variables[clean] !== undefined) return;
+  editing.value.variables[clean] = '';
+}
+
+function deleteVariable(key) {
+  delete editing.value.variables[key];
 }
 
 function addCharacter() {
