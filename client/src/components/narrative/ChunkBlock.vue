@@ -126,7 +126,8 @@
         ref="editArea"
         v-model="editValue"
         class="w-full px-4 py-3 bg-bg-primary border border-accent/30 rounded-xl text-text-primary
-               font-body text-base leading-relaxed resize-y min-h-48 focus:outline-none focus:border-accent/60"
+               font-body text-base leading-relaxed resize-y focus:outline-none focus:border-accent/60"
+        style="min-height: 60vh"
       ></textarea>
       <div class="flex gap-2 justify-end">
         <button
