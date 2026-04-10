@@ -1,6 +1,7 @@
 import ky from 'ky';
 import { stripThinkBlocks } from '../utils/think-parser.js';
 import { logApiCall } from './api-logger.js';
+import { enqueueLLMCall, getQueueLength } from './llm-queue.js';
 
 /**
  * Builds the sampler params object from settings, omitting unset values.
@@ -31,7 +32,15 @@ function buildSamplerParams(settings) {
  * @param {string} sessionId - For logging (optional)
  * @param {string} callType - Label for the log entry (e.g. 'narrative', 'meta', 'format-fixer')
  */
-export async function generateCompletion(messages, settings, modelOverride, sessionId, callType) {
+export function generateCompletion(messages, settings, modelOverride, sessionId, callType) {
+  const queueLen = getQueueLength();
+  if (queueLen > 0) {
+    console.log(`LLM queue: ${queueLen} call(s) ahead, waiting...`);
+  }
+  return enqueueLLMCall(() => _generateCompletion(messages, settings, modelOverride, sessionId, callType));
+}
+
+async function _generateCompletion(messages, settings, modelOverride, sessionId, callType) {
   const { apiEndpoint, thinkBlockStart, thinkBlockEnd } = settings;
   const model = modelOverride || settings.narrativeModel || settings.model;
 
