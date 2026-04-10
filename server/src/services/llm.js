@@ -33,11 +33,8 @@ function buildSamplerParams(settings) {
  * @param {string} callType - Label for the log entry (e.g. 'narrative', 'meta', 'format-fixer')
  */
 export function generateCompletion(messages, settings, modelOverride, sessionId, callType) {
-  const queueLen = getQueueLength();
-  if (queueLen > 0) {
-    console.log(`LLM queue: ${queueLen} call(s) ahead, waiting...`);
-  }
-  return enqueueLLMCall(() => _generateCompletion(messages, settings, modelOverride, sessionId, callType));
+  const label = `${callType || 'unknown'}${sessionId ? ` [${sessionId.slice(0, 8)}]` : ''}`;
+  return enqueueLLMCall(() => _generateCompletion(messages, settings, modelOverride, sessionId, callType), label);
 }
 
 async function _generateCompletion(messages, settings, modelOverride, sessionId, callType) {
