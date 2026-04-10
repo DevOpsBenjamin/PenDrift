@@ -52,32 +52,55 @@
           </div>
         </div>
 
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">API Endpoint</label>
-          <input v-model="editing.apiEndpoint" placeholder="http://localhost:11434/v1/chat/completions"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Provider</label>
+            <select v-model="editing.provider"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors">
+              <option value="ollama">Ollama</option>
+              <option value="lmstudio">LM Studio</option>
+              <option value="koboldcpp">KoboldCpp</option>
+              <option value="generic">Generic (OpenAI-compatible)</option>
+            </select>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">API Endpoint</label>
+            <input v-model="editing.apiEndpoint" :placeholder="endpointPlaceholder"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+          </div>
+        </div>
+
+        <div class="flex items-end gap-3">
+          <button
+            class="px-4 py-2 text-xs bg-bg-surface border border-border rounded-lg text-text-secondary
+                   hover:text-text-primary hover:border-accent/40 transition-all cursor-pointer whitespace-nowrap"
+            :class="{ 'opacity-50 cursor-wait': loadingModels }"
+            :disabled="loadingModels"
+            @click="refreshModels"
+          >{{ loadingModels ? 'Loading...' : 'Refresh Models' }}</button>
+          <span v-if="availableModels.length" class="text-xs text-text-muted">
+            {{ availableModels.length }} model(s) found
+          </span>
+          <span v-else-if="!loadingModels" class="text-xs text-text-muted">
+            No models found — check endpoint and provider
+          </span>
         </div>
 
         <div class="flex flex-col gap-1.5">
           <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Narrative Model</label>
-          <input v-model="editing.narrativeModel" placeholder="huihui_ai/qwen3.5-abliterated:9b"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+          <ModelSelect v-model="editing.narrativeModel" :models="availableModels" placeholder="Select narrative model..." />
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="flex flex-col gap-1.5">
             <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Meta-Analysis Model</label>
-            <input v-model="editing.metaModel" placeholder="Same as narrative if empty"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+            <ModelSelect v-model="editing.metaModel" :models="availableModels" placeholder="Same as narrative if empty" />
           </div>
           <div class="flex flex-col gap-1.5">
             <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Utility Model (JSON fixer)</label>
-            <input v-model="editing.utilityModel" placeholder="Same as narrative if empty"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+            <ModelSelect v-model="editing.utilityModel" :models="availableModels" placeholder="Same as narrative if empty" />
           </div>
         </div>
 
@@ -174,18 +197,46 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useSettingsStore } from '../stores/settings.js';
+import * as presetsApi from '../api/presets.js';
+import ModelSelect from '../components/presets/ModelSelect.vue';
 
 const store = useSettingsStore();
 const editing = ref(null);
 const isNew = ref(false);
+const availableModels = ref([]);
+const loadingModels = ref(false);
+
+const endpointPlaceholder = computed(() => {
+  const p = editing.value?.provider;
+  if (p === 'ollama') return 'http://localhost:11434/v1/chat/completions';
+  if (p === 'lmstudio') return 'http://localhost:1234/v1/chat/completions';
+  if (p === 'koboldcpp') return 'http://localhost:5001/v1/chat/completions';
+  return 'http://localhost:8080/v1/chat/completions';
+});
 
 onMounted(() => store.fetchPresets());
+
+async function refreshModels() {
+  if (!editing.value?.apiEndpoint) return;
+  loadingModels.value = true;
+  try {
+    availableModels.value = await presetsApi.listModels(
+      editing.value.apiEndpoint,
+      editing.value.provider || 'generic',
+    );
+  } catch {
+    availableModels.value = [];
+  } finally {
+    loadingModels.value = false;
+  }
+}
 
 function edit(preset) {
   editing.value = JSON.parse(JSON.stringify(preset));
   isNew.value = false;
+  availableModels.value = [];
 }
 
 function duplicate(preset) {
@@ -194,6 +245,7 @@ function duplicate(preset) {
   copy.name = copy.name + ' (copy)';
   editing.value = copy;
   isNew.value = true;
+  availableModels.value = [];
 }
 
 function startNew() {
@@ -201,6 +253,7 @@ function startNew() {
   editing.value = {
     id: '',
     name: '',
+    provider: 'ollama',
     apiEndpoint: 'http://localhost:11434/v1/chat/completions',
     narrativeModel: '',
     metaModel: '',

@@ -1,6 +1,7 @@
 {
   "id": "default",
   "name": "Default",
+  "provider": "ollama",
   "apiEndpoint": "http://localhost:11434/v1/chat/completions",
   "narrativeModel": "huihui_ai/qwen3.5-abliterated:9b",
   "metaModel": "huihui_ai/qwen3.5-abliterated:9b",
