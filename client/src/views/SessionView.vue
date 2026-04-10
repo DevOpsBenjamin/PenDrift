@@ -114,7 +114,7 @@ watch(showMetaHistory, async (open) => {
 onMounted(async () => {
   await sessionStore.loadSession(sessionId);
   if (sessionStore.currentSession) {
-    narrativeStore.setChapters(sessionStore.currentSession.chapters);
+    narrativeStore.setChapters(sessionId, sessionStore.currentSession.chapters);
     if (narrativeStore.currentChapterId) {
       await narrativeStore.loadChapter(sessionId, narrativeStore.currentChapterId);
     }
@@ -133,7 +133,7 @@ async function createChapter() {
   try {
     const chapter = await api.post(`sessions/${sessionId}/chapters`, { json: { title } }).json();
     sessionStore.currentSession.chapters.push(chapter);
-    narrativeStore.setChapters(sessionStore.currentSession.chapters);
+    narrativeStore.setChapters(sessionId, sessionStore.currentSession.chapters);
     await narrativeStore.loadChapter(sessionId, chapter.id);
     sidebarOpen.value = false;
   } catch (err) {

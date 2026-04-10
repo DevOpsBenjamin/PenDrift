@@ -14,10 +14,11 @@ import { writeJSON } from '../services/storage.js';
 
 const router = Router({ mergeParams: true });
 
-// Track in-progress meta-analysis per session
+// Track in-progress jobs and meta-analysis
+const jobs = new Map();
 const metaStatus = new Map();
 
-// === GENERATE ===
+// === GENERATE (async job-based) ===
 
 router.post('/generate', async (req, res) => {
   try {
@@ -34,6 +35,23 @@ router.post('/generate', async (req, res) => {
       return res.status(404).json({ message: 'Chapter not found' });
     }
 
+    // Create job and return immediately
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    jobs.set(jobId, { status: 'generating', sessionId, chapterId, result: null, error: null });
+
+    res.status(202).json({ jobId });
+
+    // Run generation in background
+    runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment, session);
+  } catch (err) {
+    console.error('Generate error:', err);
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+// Background generation logic
+async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment, session) {
+  try {
     const settings = await getSettingsPreset(session.settingsPresetId);
     const template = await getTemplate(session.templateId);
     const characters = await getCharacters(sessionId);
@@ -44,7 +62,8 @@ router.post('/generate', async (req, res) => {
     const { narrative, thinking } = await generateCompletion(messages, settings);
 
     if (!narrative) {
-      return res.status(502).json({ message: 'LLM returned empty narrative' });
+      jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: 'LLM returned empty narrative' });
+      return;
     }
 
     const chunk = await appendChunk(sessionId, {
@@ -56,11 +75,14 @@ router.post('/generate', async (req, res) => {
 
     await updateSession(sessionId, {});
 
+    // Check meta-analysis trigger
     const allChapterChunks = await getChunksByChapter(sessionId, chapterId);
     const interval = settings.chunkUpdateInterval || 10;
     const shouldUpdate = allChapterChunks.length > 0 && allChapterChunks.length % interval === 0;
+    let metaUpdatePending = false;
 
     if (shouldUpdate || isKeyMoment) {
+      metaUpdatePending = true;
       metaStatus.set(sessionId, { status: 'updating', result: null });
       const recentChunks = allChapterChunks.slice(-interval);
       runMetaAnalysis(sessionId, recentChunks, settings)
@@ -68,17 +90,31 @@ router.post('/generate', async (req, res) => {
         .catch(() => metaStatus.set(sessionId, { status: 'failed', result: null }));
     }
 
-    res.json({
-      chunk,
-      thinking: thinking || null,
-      metaUpdatePending: shouldUpdate || isKeyMoment || false,
+    jobs.set(jobId, {
+      ...jobs.get(jobId),
+      status: 'done',
+      result: { chunk, thinking: thinking || null, metaUpdatePending },
     });
   } catch (err) {
-    console.error('Generate error:', err);
-    res.status(err.status || 500).json({ message: err.message });
+    console.error('Generation job failed:', err);
+    jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: err.message });
+  }
+}
+
+// Poll job status
+router.get('/jobs/:jobId', (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ message: 'Job not found' });
+  }
+  res.json(job);
+  // Clean up completed jobs after client reads them
+  if (job.status === 'done' || job.status === 'failed') {
+    setTimeout(() => jobs.delete(req.params.jobId), 30000);
   }
 });
 
+// Regenerate (also async)
 router.post('/regenerate', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
@@ -101,28 +137,12 @@ router.post('/regenerate', async (req, res) => {
     await deleteLastChunk(sessionId, chapterId);
 
     const session = await getSession(sessionId);
-    const settings = await getSettingsPreset(session.settingsPresetId);
-    const template = await getTemplate(session.templateId);
-    const characters = await getCharacters(sessionId);
-    const importantFacts = await getFacts(sessionId);
-    const chunks = await getChunksByChapter(sessionId, chapterId);
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    jobs.set(jobId, { status: 'generating', sessionId, chapterId, result: null, error: null });
 
-    const messages = buildMessages({ settings, characters, template, chunks, directive, importantFacts });
-    const { narrative, thinking } = await generateCompletion(messages, settings);
+    res.status(202).json({ jobId });
 
-    if (!narrative) {
-      return res.status(502).json({ message: 'LLM returned empty narrative' });
-    }
-
-    const chunk = await appendChunk(sessionId, {
-      chapterId,
-      narrative,
-      directive,
-      isKeyMoment: lastChunk.isKeyMoment,
-    });
-
-    await updateSession(sessionId, {});
-    res.json({ chunk, thinking: thinking || null });
+    runGeneration(jobId, sessionId, chapterId, directive, lastChunk.isKeyMoment, session);
   } catch (err) {
     console.error('Regenerate error:', err);
     res.status(err.status || 500).json({ message: err.message });
