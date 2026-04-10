@@ -9,6 +9,7 @@
         <span v-if="activeVer.stats?.durationMs">{{ (activeVer.stats.durationMs / 1000).toFixed(1) }}s</span>
         <span v-if="activeVer.stats?.completionTokens">{{ activeVer.stats.completionTokens }} tok</span>
         <span v-if="activeVer.stats?.reasoningTokens" class="text-text-muted/30">{{ activeVer.stats.reasoningTokens }} think</span>
+        <span v-if="!activeVer.stats && activeVer.directive" class="text-accent/30">manually edited</span>
         <!-- Version navigator -->
         <div v-if="totalVersions > 1" class="flex items-center gap-1">
           <button
