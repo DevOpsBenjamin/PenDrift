@@ -56,7 +56,6 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
       json: {
         model,
         messages,
-        stream: false,
         ...samplerParams,
         ...providerOptions,
       },
