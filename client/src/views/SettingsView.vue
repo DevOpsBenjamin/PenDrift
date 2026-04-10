@@ -87,10 +87,16 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="flex flex-col gap-1.5">
             <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Update Interval</label>
             <input v-model.number="editing.chunkUpdateInterval" type="number" min="1"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Recent Chunks</label>
+            <input v-model.number="editing.recentChunksCount" type="number" min="1"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
@@ -109,8 +115,15 @@
         </div>
 
         <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">System Prompt</label>
-          <textarea v-model="editing.systemPrompt" rows="6"
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Narrative Prompt</label>
+          <textarea v-model="editing.narrativePrompt" rows="6"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   font-ui resize-y min-h-32 focus:outline-none focus:border-accent transition-colors"></textarea>
+        </div>
+
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Meta-Analysis Prompt</label>
+          <textarea v-model="editing.metaPrompt" rows="6"
             class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                    font-ui resize-y min-h-32 focus:outline-none focus:border-accent transition-colors"></textarea>
         </div>
@@ -178,10 +191,12 @@ function startNew() {
     temperature: 0.8,
     maxTokens: 2048,
     contextSize: 8192,
+    recentChunksCount: 20,
     chunkUpdateInterval: 10,
     thinkBlockStart: '<think>',
     thinkBlockEnd: '</think>',
-    systemPrompt: '',
+    narrativePrompt: '',
+    metaPrompt: '',
   };
 }
 

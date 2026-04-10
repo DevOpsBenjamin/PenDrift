@@ -35,7 +35,8 @@
       />
       <CharacterPanel
         :characters="narrativeStore.characters"
-        :updating="narrativeStore.characterUpdatePending"
+        :updating="narrativeStore.metaUpdatePending"
+        :flags="narrativeStore.consistencyFlags"
       />
     </aside>
 

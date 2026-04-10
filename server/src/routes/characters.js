@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getCharacters, updateCharacterSheets } from '../services/characters.js';
+import { getCharacters, runMetaAnalysis } from '../services/characters.js';
 import { getSession } from '../services/sessions.js';
 import { getSettingsPreset } from '../services/presets.js';
 import { getChunksByChapter } from '../services/chunks.js';
@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Manual trigger for character sheet update
+// Manual trigger for meta-analysis
 router.post('/update', async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -32,8 +32,8 @@ router.post('/update', async (req, res) => {
     const interval = settings.chunkUpdateInterval || 10;
     const recentChunks = chunks.slice(-interval);
 
-    const updated = await updateCharacterSheets(sessionId, recentChunks, settings);
-    res.json(updated);
+    const result = await runMetaAnalysis(sessionId, recentChunks, settings);
+    res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }

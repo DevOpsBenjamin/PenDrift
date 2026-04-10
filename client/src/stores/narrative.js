@@ -9,8 +9,9 @@ export const useNarrativeStore = defineStore('narrative', {
     chapters: [],
     currentChapterId: null,
     characters: [],
+    consistencyFlags: [],
     generating: false,
-    characterUpdatePending: false,
+    metaUpdatePending: false,
     error: null,
   }),
 
@@ -63,9 +64,9 @@ export const useNarrativeStore = defineStore('narrative', {
         });
         this.chunks.push(result.chunk);
 
-        if (result.characterUpdatePending) {
-          this.characterUpdatePending = true;
-          this.pollCharacterUpdate(sessionId);
+        if (result.metaUpdatePending) {
+          this.metaUpdatePending = true;
+          this.pollMetaStatus(sessionId);
         }
 
         return result;
@@ -117,20 +118,23 @@ export const useNarrativeStore = defineStore('narrative', {
       }
     },
 
-    async pollCharacterUpdate(sessionId) {
+    async pollMetaStatus(sessionId) {
       const poll = async () => {
         try {
-          const { status } = await charactersApi.getCharacterUpdateStatus(sessionId);
-          if (status === 'done' || status === 'failed') {
-            this.characterUpdatePending = false;
-            if (status === 'done') {
+          const meta = await api.get(`sessions/${sessionId}/meta/status`).json();
+          if (meta.status === 'done' || meta.status === 'failed') {
+            this.metaUpdatePending = false;
+            if (meta.status === 'done' && meta.result) {
               await this.loadCharacters(sessionId);
+              if (meta.result.consistencyFlags?.length) {
+                this.consistencyFlags = meta.result.consistencyFlags;
+              }
             }
           } else {
             setTimeout(poll, 2000);
           }
         } catch {
-          this.characterUpdatePending = false;
+          this.metaUpdatePending = false;
         }
       };
       setTimeout(poll, 2000);

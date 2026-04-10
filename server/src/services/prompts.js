@@ -10,14 +10,15 @@ function resolveVariables(text, variables) {
 
 /**
  * Builds the messages array for an LLM generation call.
+ * Only sends the last N chunks (recentChunksCount), not the full history.
  */
-export function buildMessages({ settings, characters, template, chunks, directive }) {
+export function buildMessages({ settings, characters, template, chunks, directive, importantFacts }) {
   const messages = [];
   const vars = template?.variables || {};
   const resolve = (text) => resolveVariables(text, vars);
 
-  // 1. System prompt: base + character sheets + masked intents + scenario
-  let system = settings.systemPrompt || '';
+  // 1. System prompt: narrative prompt + scenario + style + intents + characters + facts
+  let system = settings.narrativePrompt || settings.systemPrompt || '';
 
   // Scenario context
   if (template?.scenario) {
@@ -50,11 +51,20 @@ export function buildMessages({ settings, characters, template, chunks, directiv
     }
   }
 
+  // Important facts from meta-calls
+  if (importantFacts?.length) {
+    system += '\n\n## Established Facts\n';
+    system += importantFacts.map(f => `- ${f}`).join('\n');
+  }
+
   messages.push({ role: 'system', content: system });
 
-  // 2. Previous narrative chunks consolidated into one assistant message
-  if (chunks?.length) {
-    const narrativeHistory = chunks.map(c => c.narrative).join('\n\n');
+  // 2. Recent narrative chunks only (not full history)
+  const recentCount = settings.recentChunksCount || 20;
+  const recentChunks = chunks?.slice(-recentCount) || [];
+
+  if (recentChunks.length) {
+    const narrativeHistory = recentChunks.map(c => c.narrative).join('\n\n');
     messages.push({ role: 'assistant', content: narrativeHistory });
   }
 
@@ -65,35 +75,41 @@ export function buildMessages({ settings, characters, template, chunks, directiv
 }
 
 /**
- * Builds the messages array for a character sheet meta-call.
+ * Builds the messages array for the enriched meta-call.
+ * Analyzes recent narrative and returns character updates, new characters,
+ * consistency flags, and important facts.
  */
-export function buildCharacterUpdateMessages({ characters, recentChunks }) {
+export function buildMetaAnalysisMessages({ characters, recentChunks, importantFacts, metaPrompt }) {
   const narrativeText = recentChunks.map(c => c.narrative).join('\n\n');
 
-  const system = `You are a narrative analyst. Your job is to analyze recent narrative events and update character sheets to reflect how characters have evolved.
+  const system = metaPrompt || `You are a narrative analyst. Analyze recent narrative events and maintain story consistency.
 
-Given the current character sheets and the recent narrative, update each character's sheet. Consider:
-- Has their emotional state changed?
-- Have they revealed new traits or lost old ones?
-- Did any key events happen to them?
+Your tasks:
+1. UPDATE existing character sheets to reflect how they have evolved
+2. DETECT any new characters mentioned in the narrative and create sheets for them
+3. FLAG any consistency issues (name changes, contradictions, forgotten facts)
+4. EXTRACT important facts established in the narrative (locations, relationships, promises, secrets)
 
 Return ONLY valid JSON in this exact format, no other text:
-[
-  {
-    "name": "Character Name",
-    "currentState": "updated state description",
-    "traits": ["trait1", "trait2"],
-    "keyEvents": ["event1", "event2"]
+{
+  "characterUpdates": [
+    { "name": "Character Name", "currentState": "updated state", "traits": ["trait1"], "keyEvents": ["event1"] }
+  ],
+  "newCharacters": [
+    { "name": "New Char", "currentState": "state", "traits": [], "keyEvents": ["first mentioned context"] }
+  ],
+  "consistencyFlags": ["any inconsistencies found"],
+  "importantFacts": ["key facts established in the narrative"]
+}`;
+
+  let userContent = `## Current Character Sheets\n${JSON.stringify(characters, null, 2)}`;
+
+  if (importantFacts?.length) {
+    userContent += `\n\n## Previously Established Facts\n${importantFacts.map(f => `- ${f}`).join('\n')}`;
   }
-]`;
 
-  const userContent = `## Current Character Sheets
-${JSON.stringify(characters, null, 2)}
-
-## Recent Narrative
-${narrativeText}
-
-Update the character sheets based on the narrative above. Return only the JSON array.`;
+  userContent += `\n\n## Recent Narrative\n${narrativeText}`;
+  userContent += '\n\nAnalyze the narrative above. Return only the JSON object.';
 
   return [
     { role: 'system', content: system },

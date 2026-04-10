@@ -23,6 +23,10 @@ function summariesFile(sessionId) {
   return path.join(sessionDir(sessionId), 'summaries.json');
 }
 
+function factsFile(sessionId) {
+  return path.join(sessionDir(sessionId), 'facts.json');
+}
+
 export async function createSession({ templateId, title, settingsPresetId }) {
   const template = await readJSON(path.join(TEMPLATES_DIR, `${templateId}.json`));
   if (!template) {
@@ -68,6 +72,7 @@ export async function createSession({ templateId, title, settingsPresetId }) {
   await writeJSON(chunksFile(sessionId), []);
   await writeJSON(charactersFile(sessionId), characters);
   await writeJSON(summariesFile(sessionId), []);
+  await writeJSON(factsFile(sessionId), []);
 
   return session;
 }

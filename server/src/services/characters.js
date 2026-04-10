@@ -2,7 +2,8 @@ import path from 'node:path';
 import { SESSIONS_DIR } from '../utils/paths.js';
 import { readJSON, writeJSON } from './storage.js';
 import { generateCompletion } from './llm.js';
-import { buildCharacterUpdateMessages } from './prompts.js';
+import { buildMetaAnalysisMessages } from './prompts.js';
+import { getFacts, addFacts } from './facts.js';
 
 function charactersFile(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'characters.json');
@@ -17,55 +18,100 @@ export async function saveCharacters(sessionId, characters) {
 }
 
 /**
- * Meta-call: asks the LLM to update character sheets based on recent narrative.
+ * Parses the meta-call JSON response with fallbacks for markdown-wrapped JSON.
  */
-export async function updateCharacterSheets(sessionId, recentChunks, settings) {
-  const characters = await getCharacters(sessionId);
-  if (characters.length === 0) return characters;
+function parseMetaResponse(text) {
+  // Try direct parse
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Try extracting from markdown code block
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[1]);
+      } catch { /* fall through */ }
+    }
+    // Try finding a JSON object in the text
+    const objMatch = text.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      try {
+        return JSON.parse(objMatch[0]);
+      } catch { /* fall through */ }
+    }
+    throw new Error('Could not parse meta-call response as JSON');
+  }
+}
 
-  const messages = buildCharacterUpdateMessages({ characters, recentChunks });
+/**
+ * Enriched meta-call: updates characters, detects new ones, flags inconsistencies,
+ * extracts important facts. Returns the full analysis result.
+ */
+export async function runMetaAnalysis(sessionId, recentChunks, settings) {
+  const characters = await getCharacters(sessionId);
+  const importantFacts = await getFacts(sessionId);
+
+  if (recentChunks.length === 0) {
+    return { characters, consistencyFlags: [], importantFacts };
+  }
+
+  const messages = buildMetaAnalysisMessages({
+    characters,
+    recentChunks,
+    importantFacts,
+    metaPrompt: settings.metaPrompt,
+  });
 
   try {
     const { narrative: responseText } = await generateCompletion(messages, settings);
+    const result = parseMetaResponse(responseText);
 
-    // Try to parse JSON from response (may be wrapped in markdown code blocks)
-    let updated;
-    try {
-      updated = JSON.parse(responseText);
-    } catch {
-      // Try extracting JSON from markdown code block
-      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        updated = JSON.parse(jsonMatch[1]);
-      } else {
-        throw new Error('Could not parse character update response');
-      }
-    }
-
-    if (!Array.isArray(updated)) {
-      throw new Error('Character update response is not an array');
-    }
-
-    // Merge updates with existing characters, preserving names
     const now = new Date().toISOString();
-    const merged = characters.map(existing => {
-      const update = updated.find(u => u.name === existing.name);
-      if (update) {
-        return {
-          ...existing,
-          currentState: update.currentState || existing.currentState,
-          traits: update.traits || existing.traits,
-          keyEvents: update.keyEvents || existing.keyEvents,
-          lastUpdated: now,
-        };
-      }
-      return existing;
-    });
 
-    await saveCharacters(sessionId, merged);
-    return merged;
+    // 1. Update existing characters
+    if (result.characterUpdates?.length) {
+      for (const update of result.characterUpdates) {
+        const existing = characters.find(c => c.name === update.name);
+        if (existing) {
+          existing.currentState = update.currentState || existing.currentState;
+          existing.traits = update.traits || existing.traits;
+          existing.keyEvents = update.keyEvents || existing.keyEvents;
+          existing.lastUpdated = now;
+        }
+      }
+    }
+
+    // 2. Add new characters
+    if (result.newCharacters?.length) {
+      for (const newChar of result.newCharacters) {
+        // Don't add if already exists
+        if (!characters.find(c => c.name === newChar.name)) {
+          characters.push({
+            name: newChar.name,
+            currentState: newChar.currentState || '',
+            traits: newChar.traits || [],
+            keyEvents: newChar.keyEvents || [],
+            lastUpdated: now,
+          });
+        }
+      }
+    }
+
+    await saveCharacters(sessionId, characters);
+
+    // 3. Store new important facts
+    if (result.importantFacts?.length) {
+      await addFacts(sessionId, result.importantFacts);
+    }
+
+    return {
+      characters,
+      consistencyFlags: result.consistencyFlags || [],
+      newCharacters: result.newCharacters || [],
+      importantFacts: result.importantFacts || [],
+    };
   } catch (err) {
-    console.error('Character sheet update failed:', err.message);
-    return characters; // Return unchanged on failure
+    console.error('Meta-analysis failed:', err.message);
+    return { characters, consistencyFlags: [], importantFacts: [] };
   }
 }
