@@ -75,6 +75,22 @@ export async function addChunkVersion(sessionId, chunkId, { narrative, thinking,
     throw Object.assign(new Error('Chunk not found'), { status: 404 });
   }
 
+  // Migrate legacy chunk to versioned format
+  if (!chunk.versions) {
+    chunk.versions = [{
+      narrative: chunk.narrative,
+      thinking: chunk.thinking || null,
+      stats: chunk.stats || null,
+      directive: chunk.directive || null,
+      createdAt: chunk.createdAt,
+    }];
+    chunk.activeVersion = 0;
+    delete chunk.narrative;
+    delete chunk.thinking;
+    delete chunk.stats;
+    delete chunk.directive;
+  }
+
   const newIndex = chunk.versions.length;
   chunk.versions.push({
     narrative,
