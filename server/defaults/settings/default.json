@@ -14,7 +14,7 @@
   "frequencyPenalty": null,
   "repeatPenalty": null,
   "seed": null,
-  "maxTokens": 2048,
+  "maxTokens": 10240,
   "contextSize": 65536,
   "recentChunksCount": 20,
   "chunkUpdateInterval": 10,
