@@ -39,16 +39,33 @@ export async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, () => {
-    console.log(`PenDrift server running on http://localhost:${PORT}`);
-  });
+  await listenWithRetry(app, PORT, 5);
+}
 
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`\x1b[31mERROR: Port ${PORT} is already in use. Kill the other process or change PORT.\x1b[0m`);
-    } else {
-      console.error(`\x1b[31mERROR: Server failed to start: ${err.message}\x1b[0m`);
-    }
-    process.exit(1);
+/**
+ * Try to listen on the port, retry a few times if EADDRINUSE (hot-reload timing).
+ */
+function listenWithRetry(app, port, retries) {
+  return new Promise((resolve, reject) => {
+    const attempt = (remaining) => {
+      const server = app.listen(port, () => {
+        console.log(`PenDrift server running on http://localhost:${port}`);
+        resolve(server);
+      });
+
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && remaining > 0) {
+          console.log(`Port ${port} busy, retrying in 1s... (${remaining} attempts left)`);
+          setTimeout(() => attempt(remaining - 1), 1000);
+        } else if (err.code === 'EADDRINUSE') {
+          console.error(`\x1b[31mERROR: Port ${port} is already in use. Kill the other process or change PORT.\x1b[0m`);
+          process.exit(1);
+        } else {
+          console.error(`\x1b[31mERROR: Server failed to start: ${err.message}\x1b[0m`);
+          process.exit(1);
+        }
+      });
+    };
+    attempt(retries);
   });
 }
