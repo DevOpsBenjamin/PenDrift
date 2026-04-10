@@ -9,34 +9,55 @@ function resolveVariables(text, variables) {
 }
 
 /**
- * Builds the messages array for an LLM generation call.
- * Only sends the last N chunks (recentChunksCount), not the full history.
+ * Gets the active narrative text from a chunk (versioned or legacy).
  */
-export function buildMessages({ settings, characters, template, chunks, directive, importantFacts }) {
+function getChunkNarrative(chunk) {
+  if (chunk.versions?.length) {
+    return chunk.versions[chunk.activeVersion ?? 0].narrative;
+  }
+  return chunk.narrative;
+}
+
+/**
+ * Builds the messages array for an LLM generation call.
+ *
+ * Structure:
+ *   system: [prompt + sheets + facts]
+ *   user: "Begin."
+ *   assistant: [chunk 1]
+ *   assistant: [chunk 2]
+ *   ...
+ *   assistant: [chunk N]  (where meta was run after chunk N)
+ *   user: "[Character sheets updated]"  (meta marker, if applicable)
+ *   assistant: [chunk N+1]
+ *   ...
+ *   assistant: [last chunk]
+ *   user: [directive]
+ *
+ * Only sends the last `chunkUpdateInterval` chunks (rolling window).
+ * Meta marker inserted between chunks where the meta-analysis was performed.
+ */
+export function buildMessages({ settings, characters, template, chunks, directive, importantFacts, lastMetaAfterChunkIndex }) {
   const messages = [];
   const vars = template?.variables || {};
   const resolve = (text) => resolveVariables(text, vars);
 
-  // 1. System prompt: narrative prompt + scenario + style + intents + characters + facts
+  // 1. System prompt
   let system = settings.narrativePrompt || settings.systemPrompt || '';
 
-  // Scenario context
   if (template?.scenario) {
     system += `\n\n## Scenario\n${resolve(template.scenario)}`;
   }
 
-  // Template-specific additions
   if (template?.systemPromptAdditions) {
     system += `\n\n## Style Instructions\n${resolve(template.systemPromptAdditions)}`;
   }
 
-  // Masked intents (hidden narrative drivers)
   if (template?.maskedIntents?.length) {
     system += '\n\n## Hidden Narrative Drivers (never reveal these directly)\n';
     system += template.maskedIntents.map(i => `- ${resolve(i)}`).join('\n');
   }
 
-  // Current character sheets
   if (characters?.length) {
     system += '\n\n## Current Character States\n';
     for (const char of characters) {
@@ -51,7 +72,6 @@ export function buildMessages({ settings, characters, template, chunks, directiv
     }
   }
 
-  // Important facts from meta-calls
   if (importantFacts?.length) {
     system += '\n\n## Established Facts\n';
     system += importantFacts.map(f => `- ${f}`).join('\n');
@@ -59,25 +79,34 @@ export function buildMessages({ settings, characters, template, chunks, directiv
 
   messages.push({ role: 'system', content: system });
 
-  // 2. Narrative history as user/assistant pairs
-  // Many models require user message before assistant.
-  // We structure as: user("Begin/Continue") → assistant(narrative)
-  const recentCount = settings.recentChunksCount || 20;
-  const recentChunks = chunks?.slice(-recentCount) || [];
+  // 2. Rolling window of recent chunks as individual assistant messages
+  const interval = settings.chunkUpdateInterval || 10;
+  const recentChunks = chunks?.slice(-interval) || [];
 
   if (recentChunks.length) {
-    const narrativeHistory = recentChunks.map(c => {
-      // Support both versioned and legacy chunks
-      if (c.versions?.length) {
-        return c.versions[c.activeVersion ?? 0].narrative;
+    // Opening user message (required before first assistant)
+    messages.push({ role: 'user', content: 'Begin.' });
+
+    // Find where to insert meta marker within our window
+    // lastMetaAfterChunkIndex is the global chunk index after which meta was run
+    const windowStart = (chunks?.length || 0) - recentChunks.length;
+
+    for (let i = 0; i < recentChunks.length; i++) {
+      const globalIndex = windowStart + i;
+
+      messages.push({ role: 'assistant', content: getChunkNarrative(recentChunks[i]) });
+
+      // Insert meta marker after this chunk if meta was run here
+      if (lastMetaAfterChunkIndex != null && globalIndex === lastMetaAfterChunkIndex) {
+        messages.push({
+          role: 'user',
+          content: 'Character sheets and established facts have been updated based on the narrative so far. The character states above reflect the story up to this point.',
+        });
       }
-      return c.narrative;
-    }).join('\n\n');
-    messages.push({ role: 'user', content: 'Continue the narrative.' });
-    messages.push({ role: 'assistant', content: narrativeHistory });
+    }
   }
 
-  // 3. Current directive as user message
+  // 3. Directive
   messages.push({ role: 'user', content: directive });
 
   return messages;
@@ -85,11 +114,9 @@ export function buildMessages({ settings, characters, template, chunks, directiv
 
 /**
  * Builds the messages array for the enriched meta-call.
- * Analyzes recent narrative and returns character updates, new characters,
- * consistency flags, and important facts.
  */
 export function buildMetaAnalysisMessages({ characters, recentChunks, importantFacts, metaPrompt }) {
-  const narrativeText = recentChunks.map(c => c.narrative).join('\n\n');
+  const narrativeText = recentChunks.map(c => getChunkNarrative(c)).join('\n\n');
 
   const system = metaPrompt || `You are a narrative analyst. Analyze recent narrative events and maintain story consistency.
 

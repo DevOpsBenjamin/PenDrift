@@ -54,11 +54,57 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
   try {
     const settings = await getSettingsPreset(session.settingsPresetId);
     const template = await getTemplate(session.templateId);
+    const chunks = await getChunksByChapter(sessionId, chapterId);
+    const interval = settings.chunkUpdateInterval || 10;
+
+    // Meta trigger: run BEFORE generating if we've crossed the threshold
+    // e.g. we have 10 chunks and are about to generate the 11th
+    let metaRanNow = false;
+    const lastMetaAfterChunk = session.lastMetaAfterChunkIndex ?? null;
+
+    if (chunks.length > 0 && chunks.length % interval === 0 && lastMetaAfterChunk !== chunks.length - 1) {
+      console.log(`[Meta] Running meta-analysis before chunk ${chunks.length + 1} (threshold: ${interval})`);
+      metaStatus.set(sessionId, { status: 'updating', result: null });
+      try {
+        const metaChunks = chunks.slice(-interval);
+        const result = await runMetaAnalysis(sessionId, metaChunks, settings);
+        metaStatus.set(sessionId, { status: 'done', result });
+
+        // Store where meta was run in session
+        session.lastMetaAfterChunkIndex = chunks.length - 1;
+        await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
+        metaRanNow = true;
+      } catch (err) {
+        console.error('[Meta] Analysis failed:', err.message);
+        metaStatus.set(sessionId, { status: 'failed', result: null });
+      }
+    }
+
+    // Key moment also triggers meta
+    if (isKeyMoment && !metaRanNow) {
+      console.log('[Meta] Key moment triggered meta-analysis');
+      metaStatus.set(sessionId, { status: 'updating', result: null });
+      try {
+        const metaChunks = chunks.slice(-interval);
+        const result = await runMetaAnalysis(sessionId, metaChunks, settings);
+        metaStatus.set(sessionId, { status: 'done', result });
+        session.lastMetaAfterChunkIndex = chunks.length - 1;
+        await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
+        metaRanNow = true;
+      } catch (err) {
+        console.error('[Meta] Key moment analysis failed:', err.message);
+        metaStatus.set(sessionId, { status: 'failed', result: null });
+      }
+    }
+
+    // Now generate with fresh characters/facts (meta may have updated them)
     const characters = await getCharacters(sessionId);
     const importantFacts = await getFacts(sessionId);
-    const chunks = await getChunksByChapter(sessionId, chapterId);
 
-    const messages = buildMessages({ settings, characters, template, chunks, directive, importantFacts });
+    const messages = buildMessages({
+      settings, characters, template, chunks, directive, importantFacts,
+      lastMetaAfterChunkIndex: session.lastMetaAfterChunkIndex ?? null,
+    });
     const { narrative, thinking, stats } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
 
     if (!narrative) {
@@ -77,25 +123,10 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
 
     await updateSession(sessionId, {});
 
-    // Check meta-analysis trigger
-    const allChapterChunks = await getChunksByChapter(sessionId, chapterId);
-    const interval = settings.chunkUpdateInterval || 10;
-    const shouldUpdate = allChapterChunks.length > 0 && allChapterChunks.length % interval === 0;
-    let metaUpdatePending = false;
-
-    if (shouldUpdate || isKeyMoment) {
-      metaUpdatePending = true;
-      metaStatus.set(sessionId, { status: 'updating', result: null });
-      const recentChunks = allChapterChunks.slice(-interval);
-      runMetaAnalysis(sessionId, recentChunks, settings)
-        .then(result => metaStatus.set(sessionId, { status: 'done', result }))
-        .catch(() => metaStatus.set(sessionId, { status: 'failed', result: null }));
-    }
-
     jobs.set(jobId, {
       ...jobs.get(jobId),
       status: 'done',
-      result: { chunk, thinking: thinking || null, metaUpdatePending },
+      result: { chunk, thinking: thinking || null, metaUpdatePending: metaRanNow },
     });
   } catch (err) {
     console.error('Generation job failed:', err);
