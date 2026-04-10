@@ -37,7 +37,7 @@ export function getActiveNarrative(chunk) {
 /**
  * Create a new chunk with its first version.
  */
-export async function appendChunk(sessionId, { chapterId, narrative, thinking, stats, directive, isKeyMoment }) {
+export async function appendChunk(sessionId, { chapterId, narrative, thinking, stats, directive, isKeyMoment, from }) {
   const chunks = await getChunks(sessionId);
 
   const chunk = {
@@ -51,6 +51,7 @@ export async function appendChunk(sessionId, { chapterId, narrative, thinking, s
         thinking: thinking || null,
         stats: stats || null,
         directive: directive || null,
+        from: from || null,
         createdAt: new Date().toISOString(),
       },
     ],
@@ -68,7 +69,7 @@ export async function appendChunk(sessionId, { chapterId, narrative, thinking, s
 /**
  * Add a new version to an existing chunk (swipe/retry/edit).
  */
-export async function addChunkVersion(sessionId, chunkId, { narrative, thinking, stats, directive }) {
+export async function addChunkVersion(sessionId, chunkId, { narrative, thinking, stats, directive, from }) {
   const chunks = await getChunks(sessionId);
   const chunk = chunks.find(c => c.id === chunkId);
   if (!chunk) {
@@ -97,6 +98,7 @@ export async function addChunkVersion(sessionId, chunkId, { narrative, thinking,
     thinking: thinking || null,
     stats: stats || null,
     directive: directive || null,
+    from: from || null,
     createdAt: new Date().toISOString(),
   });
   chunk.activeVersion = newIndex;

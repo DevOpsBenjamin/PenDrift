@@ -7,6 +7,7 @@
     <div class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-3 text-[10px] text-text-muted/40 font-ui select-none">
         <span class="text-text-muted/60">#{{ chunkIndex + 1 }}</span>
+        <span v-if="activeVer.from" class="text-text-muted/50">{{ activeVer.from }}</span>
         <span v-if="activeVer.stats" class="flex items-center gap-2">
           <span>content: {{ (activeVer.stats.completionTokens || 0) - (activeVer.stats.reasoningTokens || 0) }}</span>
           <span>time: {{ (activeVer.stats.durationMs / 1000).toFixed(1) }}s</span>

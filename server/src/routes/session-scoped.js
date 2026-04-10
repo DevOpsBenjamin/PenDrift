@@ -105,7 +105,7 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
       settings, characters, template, chunks, directive, importantFacts,
       lastMetaAfterChunkIndex: session.lastMetaAfterChunkIndex ?? null,
     });
-    const { narrative, thinking, stats } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
+    const { narrative, thinking, stats, modelName } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
 
     if (!narrative) {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: 'LLM returned empty narrative' });
@@ -119,6 +119,7 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
       stats: stats || null,
       directive,
       isKeyMoment: isKeyMoment || false,
+      from: modelName,
     });
 
     await updateSession(sessionId, {});
@@ -208,7 +209,7 @@ async function runRegenerationAsVersion(jobId, sessionId, targetChunk, directive
     const contextChunks = allChunks.slice(0, chunkIndex);
 
     const messages = buildMessages({ settings, characters, template, chunks: contextChunks, directive, importantFacts });
-    const { narrative, thinking, stats } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
+    const { narrative, thinking, stats, modelName } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
 
     if (!narrative) {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: 'LLM returned empty narrative' });
@@ -216,7 +217,7 @@ async function runRegenerationAsVersion(jobId, sessionId, targetChunk, directive
     }
 
     const updatedChunk = await addChunkVersion(sessionId, targetChunk.id, {
-      narrative, thinking, stats, directive,
+      narrative, thinking, stats, directive, from: modelName,
     });
 
     await updateSession(sessionId, {});
@@ -256,6 +257,7 @@ router.put('/chunks/:chunkId', async (req, res) => {
       narrative,
       thinking: activeVer.thinking,
       stats: null,
+      from: 'manual edit',
       directive: activeVer.directive,
     });
 

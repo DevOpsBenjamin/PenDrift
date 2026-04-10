@@ -100,6 +100,9 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
     ({ narrative, thinking } = stripThinkBlocks(rawContent, thinkBlockStart, thinkBlockEnd));
   }
 
+  // Model name from response (actual model used)
+  const modelName = data.model || model;
+
   // Extract usage stats if available
   const usage = data.usage || {};
   const stats = {
@@ -110,7 +113,7 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
     totalTokens: usage.total_tokens || null,
   };
 
-  const result = { narrative, thinking, raw: rawContent, stats };
+  const result = { narrative, thinking, raw: rawContent, stats, modelName };
 
   // Log the successful call
   if (sessionId) {
