@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-primary: #1a1a2e;
+  --color-bg-secondary: #16213e;
+  --color-bg-surface: #0f3460;
+  --color-text-primary: #e0e0e0;
+  --color-text-secondary: #a0a0b0;
+  --color-accent: #e94560;
+  --color-accent-hover: #ff6b81;
+  --color-border: #2a2a4a;
+  --font-body: 'Georgia', serif;
+  --font-ui: system-ui, -apple-system, sans-serif;
+}
+
+body {
+  font-family: var(--font-ui);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+}
