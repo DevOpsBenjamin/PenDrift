@@ -21,7 +21,7 @@
         <button
           class="text-text-muted hover:text-accent transition-colors shrink-0 p-0.5"
           @click="requestInspect(char)"
-          title="View character sheet"
+          title="View/edit character sheet"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -30,6 +30,13 @@
         </button>
       </li>
     </ul>
+
+    <!-- Facts button -->
+    <button
+      class="w-full mt-2 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
+             rounded-lg transition-all cursor-pointer"
+      @click="$emit('editFacts')"
+    >Established Facts</button>
 
     <!-- Consistency warnings -->
     <div v-if="flags.length" class="mt-3 space-y-1">
@@ -55,7 +62,7 @@
             </svg>
           </div>
           <h3 class="text-base font-semibold mb-2">Spoiler Warning</h3>
-          <p class="text-sm text-text-secondary mb-5">Character sheets may reveal hidden plot details, secret motivations, and narrative twists. Open only if you want to debug or review the story's internal state.</p>
+          <p class="text-sm text-text-secondary mb-5">Character sheets may reveal hidden plot details, secret motivations, and narrative twists.</p>
           <div class="flex justify-center gap-3">
             <button
               class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
@@ -71,18 +78,18 @@
         </div>
       </div>
 
-      <!-- Character sheet popup -->
+      <!-- Character sheet edit popup -->
       <div
-        v-if="inspecting"
+        v-if="editing"
         class="fixed inset-0 bg-bg-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4"
-        @click.self="inspecting = null"
+        @click.self="editing = null"
       >
-        <div class="bg-bg-secondary border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <div class="bg-bg-secondary border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[80vh] overflow-y-auto">
           <div class="flex items-center justify-between mb-4">
-            <h2 class="text-lg font-semibold text-accent">{{ inspecting.name }}</h2>
+            <h2 class="text-lg font-semibold text-accent">{{ editing.name }}</h2>
             <button
               class="text-text-muted hover:text-text-primary transition-colors p-1"
-              @click="inspecting = null"
+              @click="editing = null"
             >
               <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -90,36 +97,43 @@
             </button>
           </div>
 
-          <div class="space-y-3">
-            <div v-if="inspecting.currentState">
-              <h4 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1">Current State</h4>
-              <p class="text-sm text-text-secondary leading-relaxed">{{ inspecting.currentState }}</p>
+          <div class="space-y-4">
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Current State</label>
+              <textarea v-model="editing.currentState" rows="3"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
             </div>
 
-            <div v-if="inspecting.traits?.length">
-              <h4 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1">Traits</h4>
-              <div class="flex flex-wrap gap-1.5">
-                <span
-                  v-for="trait in inspecting.traits"
-                  :key="trait"
-                  class="text-xs px-2 py-0.5 bg-bg-surface rounded-full text-text-secondary"
-                >{{ trait }}</span>
-              </div>
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Traits (one per line)</label>
+              <textarea v-model="traitsText" rows="3"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
             </div>
 
-            <div v-if="inspecting.keyEvents?.length">
-              <h4 class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1">Key Events</h4>
-              <ul class="space-y-1">
-                <li
-                  v-for="event in inspecting.keyEvents"
-                  :key="event"
-                  class="text-xs text-text-secondary leading-relaxed"
-                >- {{ event }}</li>
-              </ul>
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Key Events (one per line)</label>
+              <textarea v-model="eventsText" rows="4"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
             </div>
 
-            <div v-if="inspecting.lastUpdated" class="text-[10px] text-text-muted pt-2 border-t border-border-subtle">
-              Last updated: {{ new Date(inspecting.lastUpdated).toLocaleString() }}
+            <div v-if="editing.lastUpdated" class="text-[10px] text-text-muted">
+              Last updated: {{ new Date(editing.lastUpdated).toLocaleString() }}
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button
+                class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                       hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
+                @click="editing = null"
+              >Cancel</button>
+              <button
+                class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
+                       hover:bg-accent-hover transition-colors cursor-pointer"
+                @click="saveCharacter"
+              >Save</button>
             </div>
           </div>
         </div>
@@ -129,17 +143,29 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 
-defineProps({
+const props = defineProps({
   characters: Array,
   updating: Boolean,
   flags: { type: Array, default: () => [] },
 });
 
-const inspecting = ref(null);
+const emit = defineEmits(['editFacts', 'saveCharacter']);
+
 const showWarning = ref(false);
 const pendingChar = ref(null);
+const editing = ref(null);
+
+const traitsText = computed({
+  get: () => (editing.value?.traits || []).join('\n'),
+  set: (val) => { if (editing.value) editing.value.traits = val.split('\n').map(s => s.trim()).filter(Boolean); },
+});
+
+const eventsText = computed({
+  get: () => (editing.value?.keyEvents || []).join('\n'),
+  set: (val) => { if (editing.value) editing.value.keyEvents = val.split('\n').map(s => s.trim()).filter(Boolean); },
+});
 
 function requestInspect(char) {
   pendingChar.value = char;
@@ -148,7 +174,13 @@ function requestInspect(char) {
 
 function confirmInspect() {
   showWarning.value = false;
-  inspecting.value = pendingChar.value;
+  editing.value = JSON.parse(JSON.stringify(pendingChar.value));
   pendingChar.value = null;
+}
+
+function saveCharacter() {
+  editing.value.lastUpdated = new Date().toISOString();
+  emit('saveCharacter', editing.value);
+  editing.value = null;
 }
 </script>

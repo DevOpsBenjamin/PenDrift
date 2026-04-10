@@ -41,6 +41,8 @@
         :characters="narrativeStore.characters"
         :updating="narrativeStore.metaUpdatePending"
         :flags="narrativeStore.consistencyFlags"
+        @saveCharacter="handleSaveCharacter"
+        @editFacts="showFactsEditor = true"
       />
       <div class="p-3 border-t border-border-subtle">
         <button
@@ -66,6 +68,14 @@
         @submit="handleGenerate"
       />
     </div>
+
+    <!-- Facts Editor -->
+    <FactsEditor
+      v-if="showFactsEditor"
+      :facts="facts"
+      @close="showFactsEditor = false"
+      @save="handleSaveFacts"
+    />
 
     <!-- Meta History Modal -->
     <MetaHistoryPanel
@@ -96,6 +106,7 @@ import { useNarrativeStore } from '../stores/narrative.js';
 import ChapterList from '../components/chapters/ChapterList.vue';
 import CharacterPanel from '../components/characters/CharacterPanel.vue';
 import MetaHistoryPanel from '../components/characters/MetaHistoryPanel.vue';
+import FactsEditor from '../components/characters/FactsEditor.vue';
 import NarrativeDisplay from '../components/narrative/NarrativeDisplay.vue';
 import DirectiveInput from '../components/narrative/DirectiveInput.vue';
 import * as charactersApi from '../api/characters.js';
@@ -110,10 +121,18 @@ const sessionId = route.params.id;
 const sidebarOpen = ref(false);
 const showMetaHistory = ref(false);
 const metaHistory = ref([]);
+const showFactsEditor = ref(false);
+const facts = ref([]);
 
 watch(showMetaHistory, async (open) => {
   if (open) {
     metaHistory.value = await charactersApi.getMetaHistory(sessionId);
+  }
+});
+
+watch(showFactsEditor, async (open) => {
+  if (open) {
+    facts.value = await api.get(`sessions/${sessionId}/facts`).json();
   }
 });
 
@@ -185,6 +204,25 @@ function handleSwitchVersion({ chunkId, versionIndex }) {
     chunk.activeVersion = versionIndex;
     // Lazy persist in background, don't block UI
     generateApi.setChunkVersion(sessionId, chunkId, versionIndex).catch(() => {});
+  }
+}
+
+async function handleSaveCharacter(char) {
+  try {
+    await api.put(`sessions/${sessionId}/characters/${encodeURIComponent(char.name)}`, { json: char }).json();
+    await narrativeStore.loadCharacters(sessionId);
+  } catch (err) {
+    narrativeStore.error = err.message;
+  }
+}
+
+async function handleSaveFacts(newFacts) {
+  try {
+    await api.put(`sessions/${sessionId}/facts`, { json: { facts: newFacts } }).json();
+    facts.value = newFacts;
+    showFactsEditor.value = false;
+  } catch (err) {
+    narrativeStore.error = err.message;
   }
 }
 

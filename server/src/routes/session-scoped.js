@@ -400,6 +400,52 @@ router.post('/characters/update', async (req, res) => {
   }
 });
 
+// Save a single character sheet (manual edit)
+router.put('/characters/:charName', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { charName } = req.params;
+    const update = req.body;
+
+    const { saveCharacters } = await import('../services/characters.js');
+    const characters = await getCharacters(sessionId);
+    const idx = characters.findIndex(c => c.name === decodeURIComponent(charName));
+    if (idx === -1) {
+      return res.status(404).json({ message: 'Character not found' });
+    }
+
+    characters[idx] = { ...characters[idx], ...update };
+    await saveCharacters(sessionId, characters);
+    res.json(characters[idx]);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+// Get/save facts
+router.get('/facts', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const facts = await getFacts(sessionId);
+    res.json(facts);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+router.put('/facts', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { facts } = req.body;
+
+    const { SESSIONS_DIR } = await import('../utils/paths.js');
+    await writeJSON(path.join(SESSIONS_DIR, sessionId, 'facts.json'), facts || []);
+    res.json(facts || []);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 router.get('/characters/meta-history', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
