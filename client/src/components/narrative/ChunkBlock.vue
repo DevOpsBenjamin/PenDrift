@@ -25,6 +25,7 @@
 
 <script setup>
 import { computed } from 'vue';
+import { renderNarrative } from '../../utils/narrative-renderer.js';
 
 const props = defineProps({
   chunk: Object,
@@ -33,27 +34,65 @@ const props = defineProps({
 
 defineEmits(['regenerate', 'delete']);
 
-const formattedNarrative = computed(() => {
-  if (!props.chunk?.narrative) return '';
-  return props.chunk.narrative
-    .split('\n\n')
-    .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
-    .join('');
-});
+const formattedNarrative = computed(() => renderNarrative(props.chunk?.narrative));
 </script>
 
 <style>
-/* Narrative prose styling — unscoped so v-html works */
-.prose-narrative p {
+/* Narrative prose — unscoped for v-html */
+.prose-narrative {
   font-family: var(--font-body);
   font-size: 1.1rem;
   line-height: 1.9;
-  margin-bottom: 0.85rem;
   color: var(--color-text-primary);
 }
 
+.prose-narrative p {
+  margin-bottom: 0.85rem;
+}
+
+.prose-narrative em {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.prose-narrative strong {
+  color: var(--color-text-primary);
+  font-weight: 700;
+}
+
+/* "Dialogue" — warm accent color */
+.narrative-dialogue {
+  color: #e8b87a;
+}
+
+/* 'Inner monologue / thoughts' — muted italic */
+.narrative-thought {
+  color: #8eafc2;
+  font-style: italic;
+}
+
+/* Scene break --- */
+.narrative-scene-break {
+  display: flex;
+  justify-content: center;
+  padding: 1.5rem 0;
+}
+
+.narrative-scene-break span {
+  display: block;
+  width: 80px;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--color-border), transparent);
+}
+
+/* Horizontal rule fallback */
+.prose-narrative hr {
+  border: none;
+  margin: 1.5rem 0;
+}
+
 @media (max-width: 640px) {
-  .prose-narrative p {
+  .prose-narrative {
     font-size: 1rem;
     line-height: 1.75;
   }
