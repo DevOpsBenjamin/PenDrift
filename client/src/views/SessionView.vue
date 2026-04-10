@@ -27,6 +27,9 @@
              md:translate-x-0"
       :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
     >
+      <div class="px-3 pt-3 pb-1">
+        <h2 class="text-sm font-semibold text-text-primary truncate">{{ sessionStore.currentSession?.title }}</h2>
+      </div>
       <ChapterList
         :chapters="sessionStore.currentSession?.chapters || []"
         :currentChapterId="narrativeStore.currentChapterId"
