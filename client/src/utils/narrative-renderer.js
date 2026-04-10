@@ -18,23 +18,35 @@ const md = new MarkdownIt({
   typographer: false,
 });
 
+/**
+ * Pre-process text to wrap dialogue in markers before markdown parsing.
+ * Handles split dialogue across paragraphs and various quote styles.
+ */
+function preprocessDialogue(text) {
+  // Replace straight double quotes pairs
+  text = text.replace(/"([^"]+)"/g, '\x01DIAL\x02$1\x01/DIAL\x02');
+
+  // Replace smart double quotes pairs
+  text = text.replace(/\u201C([^\u201D]+)\u201D/g, '\x01DIAL\x02$1\x01/DIAL\x02');
+
+  // Handle opening quote without closing on same line — find the closing quote
+  // Match "text that continues... across lines... until closing"
+  text = text.replace(/"([^"]*?)"/g, '\x01DIAL\x02$1\x01/DIAL\x02');
+
+  return text;
+}
+
+/**
+ * Post-process HTML to convert dialogue markers to styled spans.
+ */
+function postprocessDialogue(html) {
+  html = html.replace(/\x01DIAL\x02/g, '<span class="narrative-dialogue">\u201C');
+  html = html.replace(/\x01\/DIAL\x02/g, '\u201D</span>');
+  return html;
+}
+
 md.renderer.rules.text = (tokens, idx) => {
   let content = tokens[idx].content;
-
-  // Style "dialogue" — double quotes
-  content = content.replace(
-    /"([^"]+)"/g,
-    '<span class="narrative-dialogue">\u201C$1\u201D</span>'
-  );
-
-  // Also handle smart quotes already in text
-  content = content.replace(
-    /\u201C([^\u201D]+)\u201D/g,
-    (match, inner) => {
-      if (match.includes('narrative-dialogue')) return match;
-      return `<span class="narrative-dialogue">\u201C${inner}\u201D</span>`;
-    }
-  );
 
   // Style 'inner monologue' — single quotes
   content = content.replace(
@@ -51,5 +63,11 @@ md.renderer.rules.hr = () => {
 
 export function renderNarrative(text) {
   if (!text) return '';
-  return md.render(text);
+  // Pre-process dialogue markers before markdown
+  const processed = preprocessDialogue(text);
+  // Render markdown
+  let html = md.render(processed);
+  // Post-process dialogue markers to styled spans
+  html = postprocessDialogue(html);
+  return html;
 }
