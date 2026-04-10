@@ -10,6 +10,7 @@
         v-for="(chunk, i) in chunks"
         :key="chunk.id"
         :chunk="chunk"
+        :chunkIndex="i"
         :isLast="i === chunks.length - 1"
         @regenerate="(data) => $emit('regenerate', data)"
         @delete="(chunkId) => $emit('delete', chunkId)"
