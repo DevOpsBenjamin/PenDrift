@@ -80,8 +80,18 @@ export async function generateCompletion(messages, settings, modelOverride, sess
   }
 
   const durationMs = Date.now() - startTime;
-  const rawContent = data.choices?.[0]?.message?.content || '';
-  const { narrative, thinking } = stripThinkBlocks(rawContent, thinkBlockStart, thinkBlockEnd);
+  const message = data.choices?.[0]?.message || {};
+  const rawContent = message.content || '';
+
+  // Some providers (LM Studio) return reasoning in a separate field
+  // Others embed <think> blocks in the content
+  let narrative, thinking;
+  if (message.reasoning_content) {
+    narrative = rawContent.trim();
+    thinking = message.reasoning_content;
+  } else {
+    ({ narrative, thinking } = stripThinkBlocks(rawContent, thinkBlockStart, thinkBlockEnd));
+  }
 
   const result = { narrative, thinking, raw: rawContent };
 
