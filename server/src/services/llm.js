@@ -1,4 +1,5 @@
-import ky from 'ky';
+import http from 'node:http';
+import https from 'node:https';
 import { stripThinkBlocks } from '../utils/think-parser.js';
 import { logApiCall } from './api-logger.js';
 import { enqueueLLMCall, getQueueLength } from './llm-queue.js';
@@ -57,18 +58,49 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 600000);
 
-    const response = await fetch(apiEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: false,
-        ...samplerParams,
-        ...providerOptions,
-      }),
-      signal: controller.signal,
+    const requestBody = JSON.stringify({
+      model,
+      messages,
+      stream: false,
+      ...samplerParams,
+      ...providerOptions,
     });
+
+    // Use node:http directly to bypass undici/fetch 300s default timeout
+    const url = new URL(apiEndpoint);
+    const httpModule = url.protocol === 'https:' ? https : http;
+
+    const response = await new Promise((resolve, reject) => {
+      const req = httpModule.request({
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(requestBody),
+        },
+        timeout: 600000,
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, body }));
+      });
+
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      req.on('error', reject);
+      controller.signal.addEventListener('abort', () => req.destroy());
+      req.write(requestBody);
+      req.end();
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Request failed with status code ${response.status}: POST ${apiEndpoint}`);
+    }
+
+    data = JSON.parse(response.body);
 
     clearTimeout(timeoutId);
 
