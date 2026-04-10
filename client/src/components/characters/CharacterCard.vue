@@ -1,9 +1,6 @@
 <template>
-  <div class="p-3 bg-bg-primary/60 rounded-lg mb-2 border" :class="character.isUser ? 'border-accent/30' : 'border-border-subtle'">
-    <h4 class="text-sm font-semibold mb-1" :class="character.isUser ? 'text-accent-hover' : 'text-accent'">
-      {{ character.name }}
-      <span v-if="character.isUser" class="text-[10px] font-normal text-text-muted ml-1">(you)</span>
-    </h4>
+  <div class="p-3 bg-bg-primary/60 rounded-lg mb-2 border border-border-subtle">
+    <h4 class="text-sm font-semibold text-accent mb-1">{{ character.name }}</h4>
     <p v-if="character.currentState" class="text-xs text-text-secondary italic mb-2 leading-relaxed">
       {{ character.currentState }}
     </p>

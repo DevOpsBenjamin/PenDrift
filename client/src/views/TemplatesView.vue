@@ -108,25 +108,6 @@
           </div>
         </div>
 
-        <!-- User character -->
-        <div class="pt-4 border-t border-border-subtle">
-          <h3 class="text-sm font-semibold mb-3">User Character</h3>
-          <div class="bg-bg-secondary rounded-xl p-4 flex flex-col gap-3 border border-accent-soft">
-            <div class="flex flex-col gap-1.5">
-              <label class="text-xs text-text-muted">Description</label>
-              <textarea v-model="editing.userCharacter.description" rows="2"
-                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
-            </div>
-            <div class="flex flex-col gap-1.5">
-              <label class="text-xs text-text-muted">Initial State</label>
-              <input v-model="editing.userCharacter.initialState"
-                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                       focus:outline-none focus:border-accent transition-colors" />
-            </div>
-          </div>
-        </div>
-
         <!-- Characters section -->
         <div class="pt-4 border-t border-border-subtle">
           <div class="flex items-center gap-3 mb-3">
@@ -249,7 +230,6 @@ function edit(tpl) {
   if (!editing.value.variables) editing.value.variables = {};
   if (!editing.value.characters) editing.value.characters = [];
   if (!editing.value.maskedIntents) editing.value.maskedIntents = [];
-  if (!editing.value.userCharacter) editing.value.userCharacter = { name: '{{user}}', description: '', initialState: '' };
   isNew.value = false;
 }
 
@@ -274,7 +254,6 @@ function startNew() {
     scenario: '',
     systemPromptAdditions: '',
     variables: { user: '' },
-    userCharacter: { name: '{{user}}', description: '', initialState: '' },
     characters: [],
     maskedIntents: [],
   };

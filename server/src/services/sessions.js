@@ -53,27 +53,14 @@ export async function createSession({ templateId, title, settingsPresetId }) {
     updatedAt: now,
   };
 
-  // Initialize character sheets from template — NPC characters
+  // Initialize character sheets from template
   const characters = (template.characters || []).map(c => ({
     name: resolve(c.name),
-    isUser: false,
     currentState: resolve(c.initialState || ''),
     traits: [],
     keyEvents: [],
     lastUpdated: now,
   }));
-
-  // User character sheet (if defined in template)
-  if (template.userCharacter) {
-    characters.unshift({
-      name: resolve(template.userCharacter.name || vars.user || 'User'),
-      isUser: true,
-      currentState: resolve(template.userCharacter.initialState || ''),
-      traits: [],
-      keyEvents: [],
-      lastUpdated: now,
-    });
-  }
 
   await ensureDir(path.join(sessionDir(sessionId), 'assets', 'images'));
   await ensureDir(path.join(sessionDir(sessionId), 'assets', 'audio'));

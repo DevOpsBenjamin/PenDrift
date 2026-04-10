@@ -39,8 +39,7 @@ export function buildMessages({ settings, characters, template, chunks, directiv
   if (characters?.length) {
     system += '\n\n## Current Character States\n';
     for (const char of characters) {
-      const role = char.isUser ? ' (the director\'s character)' : '';
-      system += `\n### ${char.name}${role}\n`;
+      system += `\n### ${char.name}\n`;
       system += `State: ${char.currentState}\n`;
       if (char.traits?.length) {
         system += `Traits: ${char.traits.join(', ')}\n`;
