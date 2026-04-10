@@ -59,12 +59,15 @@ export function buildMessages({ settings, characters, template, chunks, directiv
 
   messages.push({ role: 'system', content: system });
 
-  // 2. Recent narrative chunks only (not full history)
+  // 2. Narrative history as user/assistant pairs
+  // Many models require user message before assistant.
+  // We structure as: user("Begin/Continue") → assistant(narrative)
   const recentCount = settings.recentChunksCount || 20;
   const recentChunks = chunks?.slice(-recentCount) || [];
 
   if (recentChunks.length) {
     const narrativeHistory = recentChunks.map(c => c.narrative).join('\n\n');
+    messages.push({ role: 'user', content: 'Continue the narrative.' });
     messages.push({ role: 'assistant', content: narrativeHistory });
   }
 
