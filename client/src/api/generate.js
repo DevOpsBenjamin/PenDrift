@@ -5,9 +5,14 @@ export const startGeneration = (sessionId, { chapterId, directive, isKeyMoment }
     json: { chapterId, directive, isKeyMoment },
   }).json();
 
-export const startRegeneration = (sessionId, { chapterId }) =>
+export const startRegeneration = (sessionId, { chunkId, chapterId, directive }) =>
   api.post(`sessions/${sessionId}/regenerate`, {
-    json: { chapterId },
+    json: { chunkId, chapterId, directive },
+  }).json();
+
+export const setChunkVersion = (sessionId, chunkId, versionIndex) =>
+  api.put(`sessions/${sessionId}/chunks/${chunkId}/version`, {
+    json: { versionIndex },
   }).json();
 
 export const getJobStatus = (sessionId, jobId) =>

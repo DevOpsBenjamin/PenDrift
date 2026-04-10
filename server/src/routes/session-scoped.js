@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getSession, updateSession } from '../services/sessions.js';
 import { getSettingsPreset } from '../services/presets.js';
 import { getTemplate } from '../services/templates.js';
-import { getChunksByChapter, appendChunk, deleteLastChunk, getLastChunk } from '../services/chunks.js';
+import { getChunksByChapter, appendChunk, addChunkVersion, setActiveVersion, deleteLastChunk, getLastChunk, getActiveVersion } from '../services/chunks.js';
 import { getCharacters, runMetaAnalysis, getMetaHistory } from '../services/characters.js';
 import { getFacts } from '../services/facts.js';
 import { generateCompletion } from '../services/llm.js';
@@ -116,42 +116,92 @@ router.get('/jobs/:jobId', (req, res) => {
   }
 });
 
-// Regenerate (also async)
+// Regenerate — adds a new version to the chunk instead of deleting
 router.post('/regenerate', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
-    const { chapterId } = req.body;
+    const { chunkId, directive: newDirective } = req.body;
 
-    if (!chapterId) {
-      return res.status(400).json({ message: 'chapterId is required' });
+    if (!chunkId) {
+      return res.status(400).json({ message: 'chunkId is required' });
     }
 
-    const lastChunk = await getLastChunk(sessionId, chapterId);
-    if (!lastChunk) {
-      return res.status(400).json({ message: 'No chunks to regenerate' });
+    // Find the chunk
+    const allChunks = await getChunksByChapter(sessionId, req.body.chapterId || '');
+    let targetChunk;
+    // Search across all chapters if chapterId not provided
+    if (!req.body.chapterId) {
+      const { getChunks } = await import('../services/chunks.js');
+      const all = await getChunks(sessionId);
+      targetChunk = all.find(c => c.id === chunkId);
+    } else {
+      targetChunk = allChunks.find(c => c.id === chunkId);
     }
 
-    const directive = lastChunk.directive;
+    if (!targetChunk) {
+      return res.status(404).json({ message: 'Chunk not found' });
+    }
+
+    // Get directive from the active version or use the provided one
+    const activeVer = getActiveVersion(targetChunk);
+    const directive = newDirective || activeVer.directive;
     if (!directive) {
-      return res.status(400).json({ message: 'Last chunk has no directive to regenerate from' });
+      return res.status(400).json({ message: 'No directive to regenerate from' });
     }
-
-    await deleteLastChunk(sessionId, chapterId);
 
     const session = await getSession(sessionId);
     const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    jobs.set(jobId, { status: 'generating', sessionId, chapterId, result: null, error: null });
+    jobs.set(jobId, { status: 'generating', sessionId, chunkId, result: null, error: null });
 
     res.status(202).json({ jobId });
 
-    runGeneration(jobId, sessionId, chapterId, directive, lastChunk.isKeyMoment, session);
+    // Run generation and add as new version
+    runRegenerationAsVersion(jobId, sessionId, targetChunk, directive, session);
   } catch (err) {
     console.error('Regenerate error:', err);
     res.status(err.status || 500).json({ message: err.message });
   }
 });
 
-// Edit a chunk's narrative
+// Regeneration background job — adds version instead of replacing
+async function runRegenerationAsVersion(jobId, sessionId, targetChunk, directive, session) {
+  try {
+    const settings = await getSettingsPreset(session.settingsPresetId);
+    const template = await getTemplate(session.templateId);
+    const characters = await getCharacters(sessionId);
+    const importantFacts = await getFacts(sessionId);
+
+    // Get chunks BEFORE this chunk for context
+    const allChunks = await getChunksByChapter(sessionId, targetChunk.chapterId);
+    const chunkIndex = allChunks.findIndex(c => c.id === targetChunk.id);
+    const contextChunks = allChunks.slice(0, chunkIndex);
+
+    const messages = buildMessages({ settings, characters, template, chunks: contextChunks, directive, importantFacts });
+    const { narrative, thinking, stats } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
+
+    if (!narrative) {
+      jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: 'LLM returned empty narrative' });
+      return;
+    }
+
+    const updatedChunk = await addChunkVersion(sessionId, targetChunk.id, {
+      narrative, thinking, stats, directive,
+    });
+
+    await updateSession(sessionId, {});
+
+    jobs.set(jobId, {
+      ...jobs.get(jobId),
+      status: 'done',
+      result: { chunk: updatedChunk },
+    });
+  } catch (err) {
+    console.error('Regeneration job failed:', err);
+    jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: err.message });
+  }
+}
+
+// Edit a chunk — adds a new version with edited narrative
 router.put('/chunks/:chunkId', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
@@ -162,22 +212,41 @@ router.put('/chunks/:chunkId', async (req, res) => {
       return res.status(400).json({ message: 'narrative is required' });
     }
 
-    const { readJSON, writeJSON } = await import('../services/storage.js');
-    const { SESSIONS_DIR } = await import('../utils/paths.js');
-    const pathMod = await import('node:path');
-    const chunksPath = pathMod.join(SESSIONS_DIR, sessionId, 'chunks.json');
-    const chunks = await readJSON(chunksPath) || [];
-
-    const chunk = chunks.find(c => c.id === chunkId);
+    // Get the current active version's data to preserve directive/thinking
+    const { getChunks } = await import('../services/chunks.js');
+    const allChunks = await getChunks(sessionId);
+    const chunk = allChunks.find(c => c.id === chunkId);
     if (!chunk) {
       return res.status(404).json({ message: 'Chunk not found' });
     }
 
-    chunk.narrative = narrative;
-    chunk.editedAt = new Date().toISOString();
-    await writeJSON(chunksPath, chunks);
+    const activeVer = chunk.versions?.[chunk.activeVersion ?? 0] || chunk;
+    const updatedChunk = await addChunkVersion(sessionId, chunkId, {
+      narrative,
+      thinking: activeVer.thinking,
+      stats: null,
+      directive: activeVer.directive,
+    });
 
-    res.json(chunk);
+    res.json(updatedChunk);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+// Switch active version of a chunk
+router.put('/chunks/:chunkId/version', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { chunkId } = req.params;
+    const { versionIndex } = req.body;
+
+    if (versionIndex === undefined) {
+      return res.status(400).json({ message: 'versionIndex is required' });
+    }
+
+    const updatedChunk = await setActiveVersion(sessionId, chunkId, versionIndex);
+    res.json(updatedChunk);
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }

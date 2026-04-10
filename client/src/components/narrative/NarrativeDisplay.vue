@@ -11,9 +11,10 @@
         :key="chunk.id"
         :chunk="chunk"
         :isLast="i === chunks.length - 1"
-        @regenerate="$emit('regenerate')"
+        @regenerate="(chunkId) => $emit('regenerate', chunkId)"
         @delete="$emit('delete')"
         @edit="$emit('edit', $event)"
+        @switchVersion="$emit('switchVersion', $event)"
       />
 
       <div v-if="generating" class="flex gap-1.5 py-6 justify-center">
@@ -34,7 +35,7 @@ const props = defineProps({
   generating: Boolean,
 });
 
-defineEmits(['regenerate', 'delete', 'edit']);
+defineEmits(['regenerate', 'delete', 'edit', 'switchVersion']);
 
 const container = ref(null);
 

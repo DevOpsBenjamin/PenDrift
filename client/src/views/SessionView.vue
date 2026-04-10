@@ -59,6 +59,7 @@
         @regenerate="handleRegenerate"
         @delete="handleDelete"
         @edit="handleEdit"
+        @switchVersion="handleSwitchVersion"
       />
       <DirectiveInput
         :generating="narrativeStore.generating"
@@ -98,6 +99,7 @@ import MetaHistoryPanel from '../components/characters/MetaHistoryPanel.vue';
 import NarrativeDisplay from '../components/narrative/NarrativeDisplay.vue';
 import DirectiveInput from '../components/narrative/DirectiveInput.vue';
 import * as charactersApi from '../api/characters.js';
+import * as generateApi from '../api/generate.js';
 import api from '../api/client.js';
 
 const route = useRoute();
@@ -159,15 +161,30 @@ async function handleGenerate({ directive, isKeyMoment }) {
   await narrativeStore.generate(sessionId, directive, isKeyMoment);
 }
 
-async function handleRegenerate() {
-  await narrativeStore.regenerateLast(sessionId);
+async function handleRegenerate(chunkId) {
+  await narrativeStore.regenerateChunk(sessionId, chunkId);
 }
 
 async function handleEdit({ chunkId, narrative }) {
   try {
     const updated = await api.put(`sessions/${sessionId}/chunks/${chunkId}`, { json: { narrative } }).json();
     const chunk = narrativeStore.chunks.find(c => c.id === chunkId);
-    if (chunk) chunk.narrative = updated.narrative;
+    if (chunk) {
+      chunk.versions = updated.versions;
+      chunk.activeVersion = updated.activeVersion;
+    }
+  } catch (err) {
+    narrativeStore.error = err.message;
+  }
+}
+
+async function handleSwitchVersion({ chunkId, versionIndex }) {
+  try {
+    const updated = await generateApi.setChunkVersion(sessionId, chunkId, versionIndex);
+    const chunk = narrativeStore.chunks.find(c => c.id === chunkId);
+    if (chunk) {
+      chunk.activeVersion = updated.activeVersion;
+    }
   } catch (err) {
     narrativeStore.error = err.message;
   }

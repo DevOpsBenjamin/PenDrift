@@ -88,19 +88,13 @@ export const useNarrativeStore = defineStore('narrative', {
       }
     },
 
-    async regenerateLast(sessionId) {
+    async regenerateChunk(sessionId, chunkId) {
       if (!this.currentChapterId) return;
       this.generating = true;
       this.error = null;
       try {
-        // Remove last chunk from UI immediately
-        const chapterChunks = this.chunks.filter(c => c.chapterId === this.currentChapterId);
-        if (chapterChunks.length > 0) {
-          const lastId = chapterChunks[chapterChunks.length - 1].id;
-          this.chunks = this.chunks.filter(c => c.id !== lastId);
-        }
-
         const { jobId } = await generateApi.startRegeneration(sessionId, {
+          chunkId,
           chapterId: this.currentChapterId,
         });
         this.activeJobs[sessionId] = jobId;
@@ -108,7 +102,6 @@ export const useNarrativeStore = defineStore('narrative', {
       } catch (err) {
         this.error = err.message;
         this.generating = false;
-        await this.loadChapter(sessionId, this.currentChapterId);
       }
     },
 
@@ -142,9 +135,17 @@ export const useNarrativeStore = defineStore('narrative', {
             }
 
             if (job.result?.chunk) {
-              // Only append if we're still on the same session/chapter
               if (this.currentSessionId === sessionId) {
-                this.chunks.push(job.result.chunk);
+                // Check if this is a version update (regenerate) or a new chunk
+                const existing = this.chunks.find(c => c.id === job.result.chunk.id);
+                if (existing) {
+                  // Update existing chunk with new versions
+                  existing.versions = job.result.chunk.versions;
+                  existing.activeVersion = job.result.chunk.activeVersion;
+                } else {
+                  // New chunk
+                  this.chunks.push(job.result.chunk);
+                }
               }
             }
 

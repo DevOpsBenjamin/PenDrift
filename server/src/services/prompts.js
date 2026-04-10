@@ -66,7 +66,13 @@ export function buildMessages({ settings, characters, template, chunks, directiv
   const recentChunks = chunks?.slice(-recentCount) || [];
 
   if (recentChunks.length) {
-    const narrativeHistory = recentChunks.map(c => c.narrative).join('\n\n');
+    const narrativeHistory = recentChunks.map(c => {
+      // Support both versioned and legacy chunks
+      if (c.versions?.length) {
+        return c.versions[c.activeVersion ?? 0].narrative;
+      }
+      return c.narrative;
+    }).join('\n\n');
     messages.push({ role: 'user', content: 'Continue the narrative.' });
     messages.push({ role: 'assistant', content: narrativeHistory });
   }

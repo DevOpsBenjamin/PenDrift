@@ -16,6 +16,27 @@ export async function getChunksByChapter(sessionId, chapterId) {
   return chunks.filter(c => c.chapterId === chapterId);
 }
 
+/**
+ * Get the active version of a chunk.
+ */
+export function getActiveVersion(chunk) {
+  if (!chunk.versions?.length) {
+    // Legacy chunk without versions — return the chunk itself
+    return chunk;
+  }
+  return chunk.versions[chunk.activeVersion ?? 0];
+}
+
+/**
+ * Get the active narrative text from a chunk.
+ */
+export function getActiveNarrative(chunk) {
+  return getActiveVersion(chunk).narrative;
+}
+
+/**
+ * Create a new chunk with its first version.
+ */
 export async function appendChunk(sessionId, { chapterId, narrative, thinking, stats, directive, isKeyMoment }) {
   const chunks = await getChunks(sessionId);
 
@@ -23,18 +44,65 @@ export async function appendChunk(sessionId, { chapterId, narrative, thinking, s
     id: uuidv4(),
     sessionId,
     chapterId,
+    activeVersion: 0,
+    versions: [
+      {
+        narrative,
+        thinking: thinking || null,
+        stats: stats || null,
+        directive: directive || null,
+        createdAt: new Date().toISOString(),
+      },
+    ],
+    isKeyMoment: isKeyMoment || false,
+    imagePrompt: null,
+    imagePath: null,
+    audioPath: null,
+  };
+
+  chunks.push(chunk);
+  await writeJSON(chunksFile(sessionId), chunks);
+  return chunk;
+}
+
+/**
+ * Add a new version to an existing chunk (swipe/retry/edit).
+ */
+export async function addChunkVersion(sessionId, chunkId, { narrative, thinking, stats, directive }) {
+  const chunks = await getChunks(sessionId);
+  const chunk = chunks.find(c => c.id === chunkId);
+  if (!chunk) {
+    throw Object.assign(new Error('Chunk not found'), { status: 404 });
+  }
+
+  const newIndex = chunk.versions.length;
+  chunk.versions.push({
     narrative,
     thinking: thinking || null,
     stats: stats || null,
     directive: directive || null,
-    imagePrompt: null,
-    imagePath: null,
-    audioPath: null,
-    isKeyMoment: isKeyMoment || false,
     createdAt: new Date().toISOString(),
-  };
+  });
+  chunk.activeVersion = newIndex;
 
-  chunks.push(chunk);
+  await writeJSON(chunksFile(sessionId), chunks);
+  return chunk;
+}
+
+/**
+ * Set which version is active for a chunk.
+ */
+export async function setActiveVersion(sessionId, chunkId, versionIndex) {
+  const chunks = await getChunks(sessionId);
+  const chunk = chunks.find(c => c.id === chunkId);
+  if (!chunk) {
+    throw Object.assign(new Error('Chunk not found'), { status: 404 });
+  }
+  if (versionIndex < 0 || versionIndex >= chunk.versions.length) {
+    throw Object.assign(new Error('Version index out of range'), { status: 400 });
+  }
+
+  chunk.activeVersion = versionIndex;
   await writeJSON(chunksFile(sessionId), chunks);
   return chunk;
 }
