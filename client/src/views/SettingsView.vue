@@ -60,10 +60,25 @@
         </div>
 
         <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Model</label>
-          <input v-model="editing.model" placeholder="qwen2.5:14b"
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Narrative Model</label>
+          <input v-model="editing.narrativeModel" placeholder="huihui_ai/qwen3.5-abliterated:9b"
             class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                    placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Meta-Analysis Model</label>
+            <input v-model="editing.metaModel" placeholder="Same as narrative if empty"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Utility Model (JSON fixer)</label>
+            <input v-model="editing.utilityModel" placeholder="Same as narrative if empty"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
+          </div>
         </div>
 
         <div class="grid grid-cols-3 gap-3">
@@ -187,7 +202,9 @@ function startNew() {
     id: '',
     name: '',
     apiEndpoint: 'http://localhost:11434/v1/chat/completions',
-    model: 'qwen2.5:14b',
+    narrativeModel: '',
+    metaModel: '',
+    utilityModel: '',
     temperature: 0.8,
     maxTokens: 2048,
     contextSize: 8192,
@@ -197,6 +214,7 @@ function startNew() {
     thinkBlockEnd: '</think>',
     narrativePrompt: '',
     metaPrompt: '',
+    formatFixerPrompt: '',
   };
 }
 

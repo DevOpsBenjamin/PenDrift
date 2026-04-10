@@ -73,6 +73,7 @@ export async function createSession({ templateId, title, settingsPresetId }) {
   await writeJSON(charactersFile(sessionId), characters);
   await writeJSON(summariesFile(sessionId), []);
   await writeJSON(factsFile(sessionId), []);
+  await writeJSON(path.join(sessionDir(sessionId), 'meta-history.json'), []);
 
   return session;
 }

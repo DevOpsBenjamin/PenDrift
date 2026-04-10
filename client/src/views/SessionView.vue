@@ -38,6 +38,13 @@
         :updating="narrativeStore.metaUpdatePending"
         :flags="narrativeStore.consistencyFlags"
       />
+      <div class="p-3 border-t border-border-subtle">
+        <button
+          class="w-full py-2 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
+                 rounded-lg transition-all cursor-pointer"
+          @click="showMetaHistory = true"
+        >Meta-Analysis History</button>
+      </div>
     </aside>
 
     <!-- Main content -->
@@ -54,6 +61,13 @@
       />
     </div>
 
+    <!-- Meta History Modal -->
+    <MetaHistoryPanel
+      v-if="showMetaHistory"
+      :history="metaHistory"
+      @close="showMetaHistory = false"
+    />
+
     <!-- Error toast -->
     <Transition name="toast">
       <div
@@ -69,14 +83,16 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useSessionStore } from '../stores/session.js';
 import { useNarrativeStore } from '../stores/narrative.js';
 import ChapterList from '../components/chapters/ChapterList.vue';
 import CharacterPanel from '../components/characters/CharacterPanel.vue';
+import MetaHistoryPanel from '../components/characters/MetaHistoryPanel.vue';
 import NarrativeDisplay from '../components/narrative/NarrativeDisplay.vue';
 import DirectiveInput from '../components/narrative/DirectiveInput.vue';
+import * as charactersApi from '../api/characters.js';
 import api from '../api/client.js';
 
 const route = useRoute();
@@ -85,6 +101,14 @@ const narrativeStore = useNarrativeStore();
 
 const sessionId = route.params.id;
 const sidebarOpen = ref(false);
+const showMetaHistory = ref(false);
+const metaHistory = ref([]);
+
+watch(showMetaHistory, async (open) => {
+  if (open) {
+    metaHistory.value = await charactersApi.getMetaHistory(sessionId);
+  }
+});
 
 onMounted(async () => {
   await sessionStore.loadSession(sessionId);

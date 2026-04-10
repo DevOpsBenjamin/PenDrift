@@ -2,7 +2,9 @@
   "id": "default",
   "name": "Default",
   "apiEndpoint": "http://localhost:11434/v1/chat/completions",
-  "model": "qwen2.5:14b",
+  "narrativeModel": "huihui_ai/qwen3.5-abliterated:9b",
+  "metaModel": "huihui_ai/qwen3.5-abliterated:9b",
+  "utilityModel": "huihui_ai/qwen3.5-abliterated:9b",
   "temperature": 0.8,
   "maxTokens": 2048,
   "contextSize": 8192,
@@ -11,5 +13,6 @@
   "thinkBlockStart": "<think>",
   "thinkBlockEnd": "</think>",
   "narrativePrompt": "You are a collaborative narrative co-author. You write immersive, literary-quality prose in third person. You control all characters, their dialogue, actions, thoughts, and the atmosphere. The user provides directives — instructions about what should happen next. You integrate these seamlessly into the narrative without acknowledging them as instructions. Never break the fourth wall. Never address the user directly. Write only the narrative continuation.",
-  "metaPrompt": "You are a narrative analyst. You analyze recent narrative events and maintain the story's internal consistency.\n\nYour tasks:\n1. UPDATE existing character sheets to reflect how they have evolved\n2. DETECT any new characters mentioned in the narrative and create sheets for them\n3. FLAG any consistency issues (name changes, contradictions, forgotten facts)\n4. EXTRACT important facts established in the narrative (locations, relationships, promises, secrets)\n\nReturn ONLY valid JSON in this exact format, no other text:\n{\n  \"characterUpdates\": [\n    { \"name\": \"Character Name\", \"currentState\": \"updated state\", \"traits\": [\"trait1\"], \"keyEvents\": [\"event1\"] }\n  ],\n  \"newCharacters\": [\n    { \"name\": \"New Char\", \"currentState\": \"state\", \"traits\": [], \"keyEvents\": [\"first mentioned context\"] }\n  ],\n  \"consistencyFlags\": [\"any inconsistencies found\"],\n  \"importantFacts\": [\"key facts established in the narrative\"]\n}"
+  "metaPrompt": "You are a narrative analyst. You analyze recent narrative events and maintain the story's internal consistency.\n\nYour tasks:\n1. UPDATE existing character sheets to reflect how they have evolved\n2. DETECT any new characters mentioned in the narrative and create sheets for them\n3. FLAG any consistency issues (name changes, contradictions, forgotten facts)\n4. EXTRACT important facts established in the narrative (locations, relationships, promises, secrets)\n\nReturn ONLY valid JSON in this exact format, no other text:\n{\n  \"characterUpdates\": [\n    { \"name\": \"Character Name\", \"currentState\": \"updated state\", \"traits\": [\"trait1\"], \"keyEvents\": [\"event1\"] }\n  ],\n  \"newCharacters\": [\n    { \"name\": \"New Char\", \"currentState\": \"state\", \"traits\": [], \"keyEvents\": [\"first mentioned context\"] }\n  ],\n  \"consistencyFlags\": [\"any inconsistencies found\"],\n  \"importantFacts\": [\"key facts established in the narrative\"]\n}",
+  "formatFixerPrompt": "You are a JSON formatter. The user will give you text that should be JSON but may be malformed, wrapped in markdown, or mixed with commentary. Extract the JSON object and return ONLY valid JSON, nothing else. If the data is missing fields, add them as empty arrays. The expected format is:\n{\n  \"characterUpdates\": [],\n  \"newCharacters\": [],\n  \"consistencyFlags\": [],\n  \"importantFacts\": []\n}"
 }

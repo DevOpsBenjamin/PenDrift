@@ -2,10 +2,14 @@ import ky from 'ky';
 import { stripThinkBlocks } from '../utils/think-parser.js';
 
 /**
- * Calls the OpenAI-compatible chat completions endpoint.
+ * Calls the OpenAI-compatible chat completions endpoint with a specific model.
+ * @param {Array} messages - The messages array
+ * @param {Object} settings - Full settings preset
+ * @param {string} modelOverride - Which model to use (overrides default)
  */
-export async function generateCompletion(messages, settings) {
-  const { apiEndpoint, model, temperature, maxTokens, thinkBlockStart, thinkBlockEnd } = settings;
+export async function generateCompletion(messages, settings, modelOverride) {
+  const { apiEndpoint, temperature, maxTokens, thinkBlockStart, thinkBlockEnd } = settings;
+  const model = modelOverride || settings.narrativeModel || settings.model;
 
   let data;
   try {
@@ -16,7 +20,7 @@ export async function generateCompletion(messages, settings) {
         temperature: temperature ?? 0.8,
         max_tokens: maxTokens ?? 2048,
       },
-      timeout: 300000, // 5 min for slow local models
+      timeout: 300000,
     }).json();
   } catch (err) {
     const endpoint = apiEndpoint || 'unknown';

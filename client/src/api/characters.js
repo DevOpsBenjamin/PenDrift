@@ -9,5 +9,5 @@ export const triggerCharacterUpdate = (sessionId, chapterId) =>
     timeout: 300000,
   }).json();
 
-export const getCharacterUpdateStatus = (sessionId) =>
-  api.get(`sessions/${sessionId}/characters/status`).json();
+export const getMetaHistory = (sessionId) =>
+  api.get(`sessions/${sessionId}/characters/meta-history`).json();

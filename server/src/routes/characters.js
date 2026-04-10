@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getCharacters, runMetaAnalysis } from '../services/characters.js';
+import { getCharacters, runMetaAnalysis, getMetaHistory } from '../services/characters.js';
 import { getSession } from '../services/sessions.js';
 import { getSettingsPreset } from '../services/presets.js';
 import { getChunksByChapter } from '../services/chunks.js';
@@ -34,6 +34,16 @@ router.post('/update', async (req, res) => {
 
     const result = await runMetaAnalysis(sessionId, recentChunks, settings);
     res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+// Meta-analysis history
+router.get('/meta-history', async (req, res) => {
+  try {
+    const history = await getMetaHistory(req.params.sessionId);
+    res.json(history);
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
   }
