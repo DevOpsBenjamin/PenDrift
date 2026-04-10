@@ -10,20 +10,6 @@
         <span v-if="activeVer.stats?.completionTokens">{{ activeVer.stats.completionTokens }} tok</span>
         <span v-if="activeVer.stats?.reasoningTokens" class="text-text-muted/30">{{ activeVer.stats.reasoningTokens }} think</span>
         <span v-if="!activeVer.stats && activeVer.directive" class="text-accent/30">manually edited</span>
-        <!-- Version navigator -->
-        <div v-if="totalVersions > 1" class="flex items-center gap-0.5 text-xs text-text-muted/60">
-          <button
-            class="px-1.5 py-0.5 rounded hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer disabled:opacity-20 disabled:hover:bg-transparent"
-            :disabled="activeIndex <= 0"
-            @click="$emit('switchVersion', { chunkId: chunk.id, versionIndex: activeIndex - 1 })"
-          >&#9664;</button>
-          <span class="px-1">{{ activeIndex + 1 }}/{{ totalVersions }}</span>
-          <button
-            class="px-1.5 py-0.5 rounded hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer disabled:opacity-20 disabled:hover:bg-transparent"
-            :disabled="activeIndex >= totalVersions - 1"
-            @click="$emit('switchVersion', { chunkId: chunk.id, versionIndex: activeIndex + 1 })"
-          >&#9654;</button>
-        </div>
       </div>
 
       <!-- Action icons -->
@@ -113,10 +99,33 @@
     <!-- Display mode -->
     <div v-else class="prose-narrative" v-html="formattedNarrative"></div>
 
+    <!-- Version swipe arrows — bottom of chunk, left and right -->
+    <div v-if="totalVersions > 1 && !editing" class="flex items-center justify-between mt-3">
+      <button
+        class="w-10 h-10 flex items-center justify-center rounded-full text-lg
+               transition-all cursor-pointer"
+        :class="activeIndex > 0
+          ? 'text-text-muted hover:text-text-primary hover:bg-bg-surface'
+          : 'text-text-muted/15 cursor-default'"
+        :disabled="activeIndex <= 0"
+        @click="$emit('switchVersion', { chunkId: chunk.id, versionIndex: activeIndex - 1 })"
+      >&#9664;</button>
+      <span class="text-xs text-text-muted/50 select-none">{{ activeIndex + 1 }} / {{ totalVersions }}</span>
+      <button
+        class="w-10 h-10 flex items-center justify-center rounded-full text-lg
+               transition-all cursor-pointer"
+        :class="activeIndex < totalVersions - 1
+          ? 'text-text-muted hover:text-text-primary hover:bg-bg-surface'
+          : 'text-text-muted/15 cursor-default'"
+        :disabled="activeIndex >= totalVersions - 1"
+        @click="$emit('switchVersion', { chunkId: chunk.id, versionIndex: activeIndex + 1 })"
+      >&#9654;</button>
+    </div>
+
     <!-- Last chunk actions -->
     <div
       v-if="isLast && !editing"
-      class="flex gap-2 mt-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200
+      class="flex gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200
              sm:opacity-0 max-sm:opacity-100"
     >
       <button
