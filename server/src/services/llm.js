@@ -32,6 +32,12 @@ export async function generateCompletion(messages, settings, modelOverride) {
 
   const samplerParams = buildSamplerParams(settings);
 
+  // Provider-specific options
+  const providerOptions = {};
+  if (settings.provider === 'ollama' && settings.contextSize) {
+    providerOptions.options = { num_ctx: settings.contextSize };
+  }
+
   let data;
   try {
     data = await ky.post(apiEndpoint, {
@@ -39,6 +45,7 @@ export async function generateCompletion(messages, settings, modelOverride) {
         model,
         messages,
         ...samplerParams,
+        ...providerOptions,
       },
       timeout: 300000,
     }).json();

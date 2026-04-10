@@ -15,7 +15,7 @@
   "repeatPenalty": null,
   "seed": null,
   "maxTokens": 2048,
-  "contextSize": 8192,
+  "contextSize": 65536,
   "recentChunksCount": 20,
   "chunkUpdateInterval": 10,
   "thinkBlockStart": "<think>",
