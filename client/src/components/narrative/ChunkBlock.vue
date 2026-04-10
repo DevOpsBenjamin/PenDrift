@@ -8,7 +8,7 @@
       v-if="chunk.thinking"
       class="absolute -right-1 top-0 p-1 text-text-muted hover:text-accent transition-colors cursor-pointer
              opacity-30 group-hover:opacity-100"
-      @click="showThinking = !showThinking"
+      @click="showThinking = true"
       title="View model reasoning"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -16,12 +16,12 @@
       </svg>
     </button>
 
-    <!-- Thinking panel -->
-    <div
+    <!-- Thinking popup -->
+    <ThinkingPanel
       v-if="showThinking"
-      class="mb-4 p-3 bg-bg-surface/50 border border-border-subtle rounded-lg text-xs text-text-muted
-             leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap font-ui"
-    >{{ chunk.thinking }}</div>
+      :thinking="chunk.thinking"
+      @close="showThinking = false"
+    />
 
     <div class="prose-narrative" v-html="formattedNarrative"></div>
     <div
@@ -46,6 +46,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { renderNarrative } from '../../utils/narrative-renderer.js';
+import ThinkingPanel from './ThinkingPanel.vue';
 
 const props = defineProps({
   chunk: Object,
@@ -81,18 +82,15 @@ const formattedNarrative = computed(() => renderNarrative(props.chunk?.narrative
   font-weight: 700;
 }
 
-/* "Dialogue" — warm accent color */
 .narrative-dialogue {
   color: #e8b87a;
 }
 
-/* 'Inner monologue / thoughts' — muted italic */
 .narrative-thought {
   color: #8eafc2;
   font-style: italic;
 }
 
-/* Scene break --- */
 .narrative-scene-break {
   display: flex;
   justify-content: center;

@@ -20,7 +20,7 @@
         <span class="truncate">{{ char.name }}</span>
         <button
           class="text-text-muted hover:text-accent transition-colors shrink-0 p-0.5"
-          @click="inspecting = char"
+          @click="requestInspect(char)"
           title="View character sheet"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -41,8 +41,37 @@
       >{{ flag }}</p>
     </div>
 
-    <!-- Character inspect popup -->
+    <!-- Spoiler warning -->
     <Teleport to="body">
+      <div
+        v-if="showWarning"
+        class="fixed inset-0 bg-bg-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        @click.self="showWarning = false"
+      >
+        <div class="bg-bg-secondary border border-border rounded-2xl p-6 w-full max-w-sm shadow-2xl text-center">
+          <div class="text-warning text-3xl mb-3">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h3 class="text-base font-semibold mb-2">Spoiler Warning</h3>
+          <p class="text-sm text-text-secondary mb-5">Character sheets may reveal hidden plot details, secret motivations, and narrative twists. Open only if you want to debug or review the story's internal state.</p>
+          <div class="flex justify-center gap-3">
+            <button
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
+              @click="showWarning = false"
+            >Cancel</button>
+            <button
+              class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
+                     hover:bg-accent-hover transition-colors cursor-pointer"
+              @click="confirmInspect"
+            >Show me</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Character sheet popup -->
       <div
         v-if="inspecting"
         class="fixed inset-0 bg-bg-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4"
@@ -109,4 +138,17 @@ defineProps({
 });
 
 const inspecting = ref(null);
+const showWarning = ref(false);
+const pendingChar = ref(null);
+
+function requestInspect(char) {
+  pendingChar.value = char;
+  showWarning.value = true;
+}
+
+function confirmInspect() {
+  showWarning.value = false;
+  inspecting.value = pendingChar.value;
+  pendingChar.value = null;
+}
 </script>
