@@ -166,13 +166,22 @@ export const useNarrativeStore = defineStore('narrative', {
             // Still generating, poll again
             setTimeout(poll, 2000);
           }
-        } catch {
-          delete this.activeJobs[sessionId];
-          if (this.currentSessionId === sessionId) {
-            this.generating = false;
+        } catch (err) {
+          console.warn('[PenDrift] Poll error:', err.message || err);
+          // Retry a few times before giving up (server might have restarted)
+          pollRetries++;
+          if (pollRetries < 5) {
+            setTimeout(poll, 3000);
+          } else {
+            delete this.activeJobs[sessionId];
+            if (this.currentSessionId === sessionId) {
+              this.generating = false;
+              this.error = 'Lost connection to generation job. Refresh to check results.';
+            }
           }
         }
       };
+      let pollRetries = 0;
       setTimeout(poll, 1000);
     },
 

@@ -2,6 +2,10 @@
   <div class="p-3 sm:p-4 border-t border-border-subtle bg-bg-secondary/80 backdrop-blur-sm">
     <div class="max-w-2xl mx-auto">
       <div class="flex gap-2 sm:gap-3 items-end">
+        <!-- Generating spinner -->
+        <div v-if="generating" class="flex items-center justify-center w-8 h-8 shrink-0 mb-0.5">
+          <div class="w-5 h-5 border-2 border-accent/30 border-t-accent rounded-full animate-spin"></div>
+        </div>
         <textarea
           ref="textarea"
           v-model="directive"
