@@ -28,9 +28,12 @@ export const useNarrativeStore = defineStore('narrative', {
   actions: {
     setChapters(chapters) {
       this.chapters = chapters;
-      if (!this.currentChapterId && chapters.length > 0) {
+      // Always reset to first chapter — prevents stale ID from previous session
+      const validId = chapters.find(c => c.id === this.currentChapterId);
+      if (!validId && chapters.length > 0) {
         this.currentChapterId = chapters[0].id;
       }
+      this.chunks = [];
     },
 
     async loadChapter(sessionId, chapterId) {
