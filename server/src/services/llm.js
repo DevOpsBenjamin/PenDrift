@@ -101,14 +101,6 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
     }
 
     data = JSON.parse(response.body);
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`Request failed with status code ${response.status} ${response.statusText}: POST ${apiEndpoint}`);
-    }
-
-    data = await response.json();
   } catch (err) {
     const durationMs = Date.now() - startTime;
     const endpoint = apiEndpoint || 'unknown';
