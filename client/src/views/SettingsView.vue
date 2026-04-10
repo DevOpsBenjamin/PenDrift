@@ -15,7 +15,7 @@
         <div
           v-for="preset in store.presets"
           :key="preset.id"
-          class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm whitespace-nowrap
+          class="group flex items-center justify-between gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm whitespace-nowrap
                  transition-all duration-150"
           :class="editing?.id === preset.id
             ? 'bg-bg-surface text-text-primary font-medium'
@@ -23,6 +23,15 @@
           @click="edit(preset)"
         >
           <span class="truncate">{{ preset.name }}</span>
+          <button
+            class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent transition-all shrink-0"
+            @click.stop="duplicate(preset)"
+            title="Duplicate"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
         </div>
       </aside>
 
@@ -149,6 +158,14 @@ onMounted(() => store.fetchPresets());
 function edit(preset) {
   editing.value = JSON.parse(JSON.stringify(preset));
   isNew.value = false;
+}
+
+function duplicate(preset) {
+  const copy = JSON.parse(JSON.stringify(preset));
+  copy.id = copy.id + '_copy';
+  copy.name = copy.name + ' (copy)';
+  editing.value = copy;
+  isNew.value = true;
 }
 
 function startNew() {
