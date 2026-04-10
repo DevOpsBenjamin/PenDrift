@@ -50,7 +50,7 @@ function tryParseMetaJSON(text) {
 /**
  * Use the utility model to fix malformed JSON output.
  */
-async function fixJSONWithUtility(rawText, settings) {
+async function fixJSONWithUtility(rawText, settings, sessionId) {
   const utilityModel = settings.utilityModel || settings.narrativeModel;
   const fixerPrompt = settings.formatFixerPrompt || 'Extract and return only valid JSON from the following text.';
 
@@ -59,7 +59,7 @@ async function fixJSONWithUtility(rawText, settings) {
     { role: 'user', content: rawText },
   ];
 
-  const { narrative } = await generateCompletion(messages, settings, utilityModel);
+  const { narrative } = await generateCompletion(messages, settings, utilityModel, sessionId, 'format-fixer');
   return tryParseMetaJSON(narrative);
 }
 
@@ -88,7 +88,7 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
 
   try {
     // Step 1: meta-analysis with the smart model
-    const response = await generateCompletion(messages, settings, metaModel);
+    const response = await generateCompletion(messages, settings, metaModel, sessionId, 'meta');
     rawResponse = response.raw;
 
     // Step 2: try parsing directly
@@ -97,7 +97,7 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
     // Step 3: if parse fails, use utility model to fix format
     if (!result) {
       console.log('Meta-call JSON parse failed, trying format fixer...');
-      result = await fixJSONWithUtility(response.raw, settings);
+      result = await fixJSONWithUtility(response.raw, settings, sessionId);
     }
 
     if (!result) {

@@ -59,7 +59,7 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
     const chunks = await getChunksByChapter(sessionId, chapterId);
 
     const messages = buildMessages({ settings, characters, template, chunks, directive, importantFacts });
-    const { narrative, thinking } = await generateCompletion(messages, settings);
+    const { narrative, thinking } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
 
     if (!narrative) {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: 'LLM returned empty narrative' });
@@ -169,6 +169,21 @@ router.get('/meta/status', (req, res) => {
   const sessionId = req.params.sessionId || req.sessionId;
   const meta = metaStatus.get(sessionId) || { status: 'idle', result: null };
   res.json(meta);
+});
+
+// === API LOGS ===
+
+router.get('/api-logs', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { readJSON } = await import('../services/storage.js');
+    const { SESSIONS_DIR } = await import('../utils/paths.js');
+    const path = await import('node:path');
+    const logs = await readJSON(path.join(SESSIONS_DIR, sessionId, 'api-logs.json')) || [];
+    res.json(logs);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
 });
 
 // === CHARACTERS ===

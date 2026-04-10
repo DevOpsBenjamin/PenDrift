@@ -1,5 +1,6 @@
 import ky from 'ky';
 import { stripThinkBlocks } from '../utils/think-parser.js';
+import { logApiCall } from './api-logger.js';
 
 /**
  * Builds the sampler params object from settings, omitting unset values.
@@ -22,11 +23,15 @@ function buildSamplerParams(settings) {
 
 /**
  * Calls the OpenAI-compatible chat completions endpoint with a specific model.
+ * Logs request and response to the session's api-logs.json.
+ *
  * @param {Array} messages - The messages array
  * @param {Object} settings - Full settings preset
  * @param {string} modelOverride - Which model to use (overrides default)
+ * @param {string} sessionId - For logging (optional)
+ * @param {string} callType - Label for the log entry (e.g. 'narrative', 'meta', 'format-fixer')
  */
-export async function generateCompletion(messages, settings, modelOverride) {
+export async function generateCompletion(messages, settings, modelOverride, sessionId, callType) {
   const { apiEndpoint, thinkBlockStart, thinkBlockEnd } = settings;
   const model = modelOverride || settings.narrativeModel || settings.model;
 
@@ -38,6 +43,7 @@ export async function generateCompletion(messages, settings, modelOverride) {
     providerOptions.options = { num_ctx: settings.contextSize };
   }
 
+  const startTime = Date.now();
   let data;
   try {
     data = await ky.post(apiEndpoint, {
@@ -50,18 +56,46 @@ export async function generateCompletion(messages, settings, modelOverride) {
       timeout: 300000,
     }).json();
   } catch (err) {
+    const durationMs = Date.now() - startTime;
     const endpoint = apiEndpoint || 'unknown';
-    if (err.name === 'TimeoutError') {
-      throw Object.assign(new Error(`LLM request timed out after 5 minutes`), { status: 504 });
+    const errorMsg = err.name === 'TimeoutError'
+      ? `LLM request timed out after 5 minutes`
+      : `Could not connect to LLM at ${endpoint}. Is Ollama/KoboldCpp running? (${err.message})`;
+
+    // Log the failed call
+    if (sessionId) {
+      logApiCall(sessionId, {
+        type: callType || 'unknown',
+        model,
+        messages,
+        params: { ...samplerParams, ...providerOptions },
+        error: errorMsg,
+        durationMs,
+      }).catch(() => {});
     }
-    throw Object.assign(
-      new Error(`Could not connect to LLM at ${endpoint}. Is Ollama/KoboldCpp running? (${err.message})`),
-      { status: 502 },
-    );
+
+    throw Object.assign(new Error(errorMsg), {
+      status: err.name === 'TimeoutError' ? 504 : 502,
+    });
   }
 
+  const durationMs = Date.now() - startTime;
   const rawContent = data.choices?.[0]?.message?.content || '';
   const { narrative, thinking } = stripThinkBlocks(rawContent, thinkBlockStart, thinkBlockEnd);
 
-  return { narrative, thinking, raw: rawContent };
+  const result = { narrative, thinking, raw: rawContent };
+
+  // Log the successful call
+  if (sessionId) {
+    logApiCall(sessionId, {
+      type: callType || 'unknown',
+      model,
+      messages,
+      params: { ...samplerParams, ...providerOptions },
+      response: result,
+      durationMs,
+    }).catch(() => {});
+  }
+
+  return result;
 }
