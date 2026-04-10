@@ -1,5 +1,5 @@
 <template>
-  <div id="pendrift" class="min-h-dvh flex flex-col">
+  <div id="pendrift" class="h-dvh flex flex-col overflow-hidden">
     <AppHeader />
     <RouterView />
   </div>
