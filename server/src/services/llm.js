@@ -52,15 +52,31 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
   const startTime = Date.now();
   let data;
   try {
-    data = await ky.post(apiEndpoint, {
-      json: {
+    // Use native fetch with AbortController for reliable long timeouts
+    // ky/node http agent may have hidden TCP timeouts at ~300s
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
+
+    const response = await fetch(apiEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         model,
         messages,
+        stream: false,
         ...samplerParams,
         ...providerOptions,
-      },
-      timeout: 600000,
-    }).json();
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Request failed with status code ${response.status} ${response.statusText}: POST ${apiEndpoint}`);
+    }
+
+    data = await response.json();
   } catch (err) {
     const durationMs = Date.now() - startTime;
     const endpoint = apiEndpoint || 'unknown';
