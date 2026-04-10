@@ -11,18 +11,18 @@
         <span v-if="activeVer.stats?.reasoningTokens" class="text-text-muted/30">{{ activeVer.stats.reasoningTokens }} think</span>
         <span v-if="!activeVer.stats && activeVer.directive" class="text-accent/30">manually edited</span>
         <!-- Version navigator -->
-        <div v-if="totalVersions > 1" class="flex items-center gap-1">
+        <div v-if="totalVersions > 1" class="flex items-center gap-0.5 text-xs text-text-muted/60">
           <button
-            class="hover:text-text-secondary transition-colors cursor-pointer disabled:opacity-20"
+            class="px-1.5 py-0.5 rounded hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer disabled:opacity-20 disabled:hover:bg-transparent"
             :disabled="activeIndex <= 0"
             @click="$emit('switchVersion', { chunkId: chunk.id, versionIndex: activeIndex - 1 })"
-          >&lt;</button>
-          <span>{{ activeIndex + 1 }}/{{ totalVersions }}</span>
+          >&#9664;</button>
+          <span class="px-1">{{ activeIndex + 1 }}/{{ totalVersions }}</span>
           <button
-            class="hover:text-text-secondary transition-colors cursor-pointer disabled:opacity-20"
+            class="px-1.5 py-0.5 rounded hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer disabled:opacity-20 disabled:hover:bg-transparent"
             :disabled="activeIndex >= totalVersions - 1"
             @click="$emit('switchVersion', { chunkId: chunk.id, versionIndex: activeIndex + 1 })"
-          >&gt;</button>
+          >&#9654;</button>
         </div>
       </div>
 
