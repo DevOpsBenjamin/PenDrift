@@ -519,63 +519,9 @@ router.post('/chapters/finalize', async (req, res) => {
       session.lastMetaAfterChunkIndex = null; // Reset for new chapter
     }
 
-    // Generate chapter title from the LLM
-    let generatedTitle = `Chapter ${chapter.order + 1}`;
-    try {
-      const getNarrative = (c) => {
-        if (c.versions?.length) return c.versions[c.activeVersion ?? 0].narrative;
-        return c.narrative;
-      };
-
-      // Build title prompt: 2 first, 1 middle, 2 last chunks + meta summary
-      const titleMessages = [
-        { role: 'system', content: 'You are a chapter title generator for a novel. You will receive excerpts from the beginning, middle, and end of a chapter, plus a meta-analysis summary. Suggest a short, evocative chapter title (3-6 words max). Return ONLY the title, nothing else. No quotes, no explanation.' },
-      ];
-
-      // First 2 chunks
-      if (chunks.length >= 1) {
-        titleMessages.push({ role: 'user', content: 'This is the BEGINNING of the chapter:' });
-        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[0]).slice(0, 500) });
-        if (chunks.length >= 2) {
-          titleMessages.push({ role: 'assistant', content: getNarrative(chunks[1]).slice(0, 500) });
-        }
-      }
-
-      // Middle chunk
-      if (chunks.length >= 5) {
-        const midIdx = Math.floor(chunks.length / 2);
-        titleMessages.push({ role: 'user', content: 'This is the MIDDLE of the chapter:' });
-        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[midIdx]).slice(0, 500) });
-      }
-
-      // Last 2 chunks
-      if (chunks.length >= 3) {
-        titleMessages.push({ role: 'user', content: 'This is the END of the chapter:' });
-        if (chunks.length >= 4) {
-          titleMessages.push({ role: 'assistant', content: getNarrative(chunks[chunks.length - 2]).slice(0, 500) });
-        }
-        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[chunks.length - 1]).slice(0, 500) });
-      }
-
-      // Meta summary
-      const characters = await getCharacters(sessionId);
-      const importantFacts = await getFacts(sessionId);
-      let metaSummary = 'Meta-analysis summary:\n';
-      metaSummary += 'Characters: ' + characters.map(c => `${c.name} (${c.currentState})`).join('; ') + '\n';
-      if (importantFacts.length) {
-        metaSummary += 'Key facts: ' + importantFacts.slice(-5).join('; ');
-      }
-      titleMessages.push({ role: 'user', content: metaSummary + '\n\nBased on all of the above, suggest a chapter title.' });
-
-      const metaModel = settings.metaModel || settings.narrativeModel;
-      const titleSettings = { ...settings, maxTokens: (settings.maxTokens || 1024) * 2 };
-      const { narrative: titleResult } = await generateCompletion(titleMessages, titleSettings, metaModel, sessionId, 'title');
-      if (titleResult && titleResult.length < 80) {
-        generatedTitle = titleResult.replace(/["']/g, '').trim();
-      }
-    } catch (err) {
-      console.error('[Finalize] Title generation failed:', err.message);
-    }
+    // Generate chapter title
+    const { generateChapterTitle } = await import('../services/title-generator.js');
+    const generatedTitle = await generateChapterTitle(sessionId, chunks, settings, chapter.order);
 
     // Finalize the chapter
     chapter.finalized = true;
@@ -615,54 +561,9 @@ router.post('/chapters/:chapterId/regen-title', async (req, res) => {
     const settings = await getSettingsPreset(session.settingsPresetId);
     const chunks = await getChunksByChapter(sessionId, chapterId);
 
-    const getNarrative = (c) => {
-      if (c.versions?.length) return c.versions[c.activeVersion ?? 0].narrative;
-      return c.narrative;
-    };
-
-    const titleMessages = [
-      { role: 'system', content: 'You are a chapter title generator for a novel. You will receive excerpts from the beginning, middle, and end of a chapter, plus a meta-analysis summary. Suggest a short, evocative chapter title (3-6 words max). Return ONLY the title, nothing else. No quotes, no explanation.' },
-    ];
-
-    if (chunks.length >= 1) {
-      titleMessages.push({ role: 'user', content: 'This is the BEGINNING of the chapter:' });
-      titleMessages.push({ role: 'assistant', content: getNarrative(chunks[0]).slice(0, 500) });
-      if (chunks.length >= 2) {
-        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[1]).slice(0, 500) });
-      }
-    }
-
-    if (chunks.length >= 5) {
-      const midIdx = Math.floor(chunks.length / 2);
-      titleMessages.push({ role: 'user', content: 'This is the MIDDLE of the chapter:' });
-      titleMessages.push({ role: 'assistant', content: getNarrative(chunks[midIdx]).slice(0, 500) });
-    }
-
-    if (chunks.length >= 3) {
-      titleMessages.push({ role: 'user', content: 'This is the END of the chapter:' });
-      if (chunks.length >= 4) {
-        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[chunks.length - 2]).slice(0, 500) });
-      }
-      titleMessages.push({ role: 'assistant', content: getNarrative(chunks[chunks.length - 1]).slice(0, 500) });
-    }
-
-    const characters = await getCharacters(sessionId);
-    const importantFacts = await getFacts(sessionId);
-    let metaSummary = 'Meta-analysis summary:\n';
-    metaSummary += 'Characters: ' + characters.map(c => `${c.name} (${c.currentState})`).join('; ') + '\n';
-    if (importantFacts.length) {
-      metaSummary += 'Key facts: ' + importantFacts.slice(-5).join('; ');
-    }
-    titleMessages.push({ role: 'user', content: metaSummary + '\n\nBased on all of the above, suggest a chapter title.' });
-
-    const metaModel = settings.metaModel || settings.narrativeModel;
-    const titleSettings = { ...settings, maxTokens: (settings.maxTokens || 1024) * 2 };
-    const { narrative: titleResult } = await generateCompletion(titleMessages, titleSettings, metaModel, sessionId, 'title');
-
-    if (titleResult && titleResult.length < 80) {
-      chapter.title = titleResult.replace(/["']/g, '').trim();
-      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
-    }
+    const { generateChapterTitle } = await import('../services/title-generator.js');
+    chapter.title = await generateChapterTitle(sessionId, chunks, settings, chapter.order);
+    await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
 
     res.json(chapter);
   } catch (err) {
