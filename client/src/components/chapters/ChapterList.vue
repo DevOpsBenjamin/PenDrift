@@ -29,6 +29,18 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
           <span class="flex-1 truncate">{{ chapter.title }}</span>
+          <!-- Regen title for finalized chapters -->
+          <button
+            v-if="chapter.finalized"
+            class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent transition-all shrink-0 p-0.5"
+            @click.stop="$emit('regenTitle', chapter.id)"
+            title="Regenerate title"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+          <!-- Rename for non-finalized -->
           <button
             v-if="!chapter.finalized"
             class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent transition-all shrink-0 p-0.5"
@@ -64,7 +76,7 @@ const props = defineProps({
   finalizing: Boolean,
 });
 
-const emit = defineEmits(['select', 'rename', 'finalize']);
+const emit = defineEmits(['select', 'rename', 'finalize', 'regenTitle']);
 
 const renamingId = ref(null);
 const renameValue = ref('');

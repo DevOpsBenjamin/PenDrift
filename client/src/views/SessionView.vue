@@ -37,6 +37,7 @@
         @select="switchChapter"
         @rename="renameChapter"
         @finalize="finalizeChapter"
+        @regenTitle="regenTitle"
       />
       <CharacterPanel
         :characters="narrativeStore.characters"
@@ -187,6 +188,16 @@ async function finalizeChapter() {
     narrativeStore.error = err.message;
   } finally {
     finalizing.value = false;
+  }
+}
+
+async function regenTitle(chapterId) {
+  try {
+    const result = await api.post(`sessions/${sessionId}/chapters/${chapterId}/regen-title`, { timeout: 600000 }).json();
+    const chapter = sessionStore.currentSession.chapters.find(c => c.id === chapterId);
+    if (chapter) chapter.title = result.title;
+  } catch (err) {
+    narrativeStore.error = err.message;
   }
 }
 

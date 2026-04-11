@@ -600,6 +600,76 @@ router.post('/chapters/finalize', async (req, res) => {
   }
 });
 
+// Regenerate chapter title only (no meta re-run)
+router.post('/chapters/:chapterId/regen-title', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { chapterId } = req.params;
+
+    const session = await getSession(sessionId);
+    const chapter = session.chapters.find(c => c.id === chapterId);
+    if (!chapter) {
+      return res.status(404).json({ message: 'Chapter not found' });
+    }
+
+    const settings = await getSettingsPreset(session.settingsPresetId);
+    const chunks = await getChunksByChapter(sessionId, chapterId);
+
+    const getNarrative = (c) => {
+      if (c.versions?.length) return c.versions[c.activeVersion ?? 0].narrative;
+      return c.narrative;
+    };
+
+    const titleMessages = [
+      { role: 'system', content: 'You are a chapter title generator for a novel. You will receive excerpts from the beginning, middle, and end of a chapter, plus a meta-analysis summary. Suggest a short, evocative chapter title (3-6 words max). Return ONLY the title, nothing else. No quotes, no explanation.' },
+    ];
+
+    if (chunks.length >= 1) {
+      titleMessages.push({ role: 'user', content: 'This is the BEGINNING of the chapter:' });
+      titleMessages.push({ role: 'assistant', content: getNarrative(chunks[0]).slice(0, 500) });
+      if (chunks.length >= 2) {
+        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[1]).slice(0, 500) });
+      }
+    }
+
+    if (chunks.length >= 5) {
+      const midIdx = Math.floor(chunks.length / 2);
+      titleMessages.push({ role: 'user', content: 'This is the MIDDLE of the chapter:' });
+      titleMessages.push({ role: 'assistant', content: getNarrative(chunks[midIdx]).slice(0, 500) });
+    }
+
+    if (chunks.length >= 3) {
+      titleMessages.push({ role: 'user', content: 'This is the END of the chapter:' });
+      if (chunks.length >= 4) {
+        titleMessages.push({ role: 'assistant', content: getNarrative(chunks[chunks.length - 2]).slice(0, 500) });
+      }
+      titleMessages.push({ role: 'assistant', content: getNarrative(chunks[chunks.length - 1]).slice(0, 500) });
+    }
+
+    const characters = await getCharacters(sessionId);
+    const importantFacts = await getFacts(sessionId);
+    let metaSummary = 'Meta-analysis summary:\n';
+    metaSummary += 'Characters: ' + characters.map(c => `${c.name} (${c.currentState})`).join('; ') + '\n';
+    if (importantFacts.length) {
+      metaSummary += 'Key facts: ' + importantFacts.slice(-5).join('; ');
+    }
+    titleMessages.push({ role: 'user', content: metaSummary + '\n\nBased on all of the above, suggest a chapter title.' });
+
+    const metaModel = settings.metaModel || settings.narrativeModel;
+    const titleSettings = { ...settings, maxTokens: (settings.maxTokens || 1024) * 2 };
+    const { narrative: titleResult } = await generateCompletion(titleMessages, titleSettings, metaModel, sessionId, 'title');
+
+    if (titleResult && titleResult.length < 80) {
+      chapter.title = titleResult.replace(/["']/g, '').trim();
+      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
+    }
+
+    res.json(chapter);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 router.put('/chapters/:chapterId', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
