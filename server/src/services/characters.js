@@ -93,11 +93,16 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
 
   const metaModel = settings.metaModel || settings.narrativeModel;
 
+  // Get previous meta results for context continuity
+  const allMeta = await getMetaHistory(sessionId);
+  const previousMetaResults = allMeta.filter(m => m.status === 'success').slice(-5);
+
   const messages = buildMetaAnalysisMessages({
     characters,
     recentChunks,
     importantFacts,
     metaPrompt: settings.metaPrompt,
+    previousMetaResults,
   });
 
   let rawResponse = '';

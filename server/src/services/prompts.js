@@ -115,7 +115,7 @@ export function buildMessages({ settings, characters, template, chunks, directiv
 /**
  * Builds the messages array for the enriched meta-call.
  */
-export function buildMetaAnalysisMessages({ characters, recentChunks, importantFacts, metaPrompt }) {
+export function buildMetaAnalysisMessages({ characters, recentChunks, importantFacts, metaPrompt, previousMetaResults }) {
   const narrativeText = recentChunks.map(c => getChunkNarrative(c)).join('\n\n');
 
   const system = metaPrompt || `You are a narrative analyst. Analyze recent narrative events and maintain story consistency.
@@ -142,6 +142,26 @@ Return ONLY valid JSON in this exact format, no other text:
 
   if (importantFacts?.length) {
     userContent += `\n\n## Previously Established Facts\n${importantFacts.map(f => `- ${f}`).join('\n')}`;
+  }
+
+  // Include previous meta-analysis results for continuity
+  if (previousMetaResults?.length) {
+    userContent += '\n\n## Previous Meta-Analysis Results (for reference — build on these, don\'t lose information)';
+    for (const meta of previousMetaResults) {
+      userContent += `\n\n### Analysis at ${meta.timestamp}`;
+      if (meta.result?.characterUpdates?.length) {
+        userContent += '\nCharacter updates: ' + meta.result.characterUpdates.map(c => `${c.name}: ${c.currentState}`).join('; ');
+      }
+      if (meta.result?.newCharacters?.length) {
+        userContent += '\nNew characters: ' + meta.result.newCharacters.map(c => c.name).join(', ');
+      }
+      if (meta.result?.importantFacts?.length) {
+        userContent += '\nFacts found: ' + meta.result.importantFacts.join('; ');
+      }
+      if (meta.result?.consistencyFlags?.length) {
+        userContent += '\nFlags: ' + meta.result.consistencyFlags.join('; ');
+      }
+    }
   }
 
   userContent += `\n\n## Recent Narrative\n${narrativeText}`;
