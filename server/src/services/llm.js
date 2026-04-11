@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { stripThinkBlocks } from '../utils/think-parser.js';
-import { logApiCall } from './api-logger.js';
+import { logApiRequest, logApiResult } from './api-logger.js';
 import { enqueueLLMCall, getQueueLength } from './llm-queue.js';
 
 /**
@@ -48,6 +48,17 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
   const providerOptions = {};
   if (settings.provider === 'ollama' && settings.contextSize) {
     providerOptions.options = { num_ctx: settings.contextSize };
+  }
+
+  // Log request BEFORE the call — survives server crashes
+  let logIndex = -1;
+  if (sessionId) {
+    logIndex = await logApiRequest(sessionId, {
+      type: callType || 'unknown',
+      model,
+      messages,
+      params: { ...samplerParams, ...providerOptions },
+    }).catch(() => -1);
   }
 
   const startTime = Date.now();
@@ -108,16 +119,9 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
       ? `LLM request timed out after 5 minutes`
       : `Could not connect to LLM at ${endpoint}. Is Ollama/KoboldCpp running? (${err.message})`;
 
-    // Log the failed call
-    if (sessionId) {
-      logApiCall(sessionId, {
-        type: callType || 'unknown',
-        model,
-        messages,
-        params: { ...samplerParams, ...providerOptions },
-        error: errorMsg,
-        durationMs,
-      }).catch(() => {});
+    // Update log with failure
+    if (sessionId && logIndex >= 0) {
+      logApiResult(sessionId, logIndex, { error: errorMsg, durationMs }).catch(() => {});
     }
 
     throw Object.assign(new Error(errorMsg), {
@@ -154,16 +158,9 @@ async function _generateCompletion(messages, settings, modelOverride, sessionId,
 
   const result = { narrative, thinking, raw: rawContent, stats, modelName };
 
-  // Log the successful call
-  if (sessionId) {
-    logApiCall(sessionId, {
-      type: callType || 'unknown',
-      model,
-      messages,
-      params: { ...samplerParams, ...providerOptions },
-      response: result,
-      durationMs,
-    }).catch(() => {});
+  // Update log with success
+  if (sessionId && logIndex >= 0) {
+    logApiResult(sessionId, logIndex, { response: result, durationMs }).catch(() => {});
   }
 
   return result;
