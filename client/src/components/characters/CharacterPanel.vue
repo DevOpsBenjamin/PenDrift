@@ -31,9 +31,16 @@
       </li>
     </ul>
 
-    <!-- Facts button -->
+    <!-- Add character button -->
     <button
       class="w-full mt-2 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
+             rounded-lg transition-all cursor-pointer border border-dashed border-border"
+      @click="addCharacter"
+    >+ Add Character</button>
+
+    <!-- Facts button -->
+    <button
+      class="w-full mt-1 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
              rounded-lg transition-all cursor-pointer"
       @click="$emit('editFacts')"
     >Established Facts</button>
@@ -151,7 +158,7 @@ const props = defineProps({
   flags: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(['editFacts', 'saveCharacter']);
+const emit = defineEmits(['editFacts', 'saveCharacter', 'addCharacter']);
 
 const showWarning = ref(false);
 const pendingChar = ref(null);
@@ -182,5 +189,18 @@ function saveCharacter() {
   editing.value.lastUpdated = new Date().toISOString();
   emit('saveCharacter', editing.value);
   editing.value = null;
+}
+
+function addCharacter() {
+  const name = window.prompt('Character name:');
+  if (!name?.trim()) return;
+  editing.value = {
+    name: name.trim(),
+    currentState: '',
+    traits: [],
+    keyEvents: [],
+    lastUpdated: new Date().toISOString(),
+    _isNew: true,
+  };
 }
 </script>

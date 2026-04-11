@@ -408,6 +408,38 @@ router.post('/characters/update', async (req, res) => {
   }
 });
 
+// Add a new character manually
+router.post('/characters', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const newChar = req.body;
+
+    if (!newChar.name) {
+      return res.status(400).json({ message: 'Character name is required' });
+    }
+
+    const { saveCharacters } = await import('../services/characters.js');
+    const characters = await getCharacters(sessionId);
+
+    if (characters.find(c => c.name === newChar.name)) {
+      return res.status(400).json({ message: 'Character already exists' });
+    }
+
+    characters.push({
+      name: newChar.name,
+      currentState: newChar.currentState || '',
+      traits: newChar.traits || [],
+      keyEvents: newChar.keyEvents || [],
+      lastUpdated: new Date().toISOString(),
+    });
+
+    await saveCharacters(sessionId, characters);
+    res.status(201).json(characters[characters.length - 1]);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 // Save a single character sheet (manual edit)
 router.put('/characters/:charName', async (req, res) => {
   try {

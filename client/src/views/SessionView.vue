@@ -244,7 +244,12 @@ function handleSwitchVersion({ chunkId, versionIndex }) {
 
 async function handleSaveCharacter(char) {
   try {
-    await api.put(`sessions/${sessionId}/characters/${encodeURIComponent(char.name)}`, { json: char }).json();
+    if (char._isNew) {
+      delete char._isNew;
+      await api.post(`sessions/${sessionId}/characters`, { json: char }).json();
+    } else {
+      await api.put(`sessions/${sessionId}/characters/${encodeURIComponent(char.name)}`, { json: char }).json();
+    }
     await narrativeStore.loadCharacters(sessionId);
   } catch (err) {
     narrativeStore.error = err.message;
