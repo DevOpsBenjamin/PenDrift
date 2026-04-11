@@ -34,6 +34,9 @@ router.post('/generate', async (req, res) => {
     if (!chapter) {
       return res.status(404).json({ message: 'Chapter not found' });
     }
+    if (chapter.finalized) {
+      return res.status(400).json({ message: 'Cannot generate in a finalized chapter' });
+    }
 
     // Create job and return immediately
     const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -101,9 +104,20 @@ async function runGeneration(jobId, sessionId, chapterId, directive, isKeyMoment
     const characters = await getCharacters(sessionId);
     const importantFacts = await getFacts(sessionId);
 
+    // Cross-chapter context: if this chapter is empty, get previous chapter's last chunks
+    let previousChapterChunks = null;
+    if (chunks.length === 0) {
+      const chapterIdx = session.chapters.findIndex(c => c.id === chapterId);
+      if (chapterIdx > 0) {
+        const prevChapterId = session.chapters[chapterIdx - 1].id;
+        previousChapterChunks = await getChunksByChapter(sessionId, prevChapterId);
+      }
+    }
+
     const messages = buildMessages({
       settings, characters, template, chunks, directive, importantFacts,
       lastMetaAfterChunkIndex: session.lastMetaAfterChunkIndex ?? null,
+      previousChapterChunks,
     });
     const { narrative, thinking, stats, modelName } = await generateCompletion(messages, settings, null, sessionId, 'narrative');
 
@@ -478,24 +492,71 @@ router.get('/chapters/:chapterId', async (req, res) => {
   }
 });
 
-router.post('/chapters', async (req, res) => {
+// Finalize current chapter: run meta, generate title, create next chapter
+router.post('/chapters/finalize', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
-    const { title } = req.body;
-    const session = await getSession(sessionId);
+    const { chapterId } = req.body;
 
-    const chapter = {
+    const session = await getSession(sessionId);
+    const chapter = session.chapters.find(c => c.id === chapterId);
+    if (!chapter) {
+      return res.status(404).json({ message: 'Chapter not found' });
+    }
+    if (chapter.finalized) {
+      return res.status(400).json({ message: 'Chapter already finalized' });
+    }
+
+    const settings = await getSettingsPreset(session.settingsPresetId);
+    const chunks = await getChunksByChapter(sessionId, chapterId);
+
+    // Run meta-analysis on all chapter chunks
+    if (chunks.length > 0) {
+      console.log(`[Finalize] Running meta-analysis on chapter "${chapter.title}" (${chunks.length} chunks)`);
+      await runMetaAnalysis(sessionId, chunks, settings);
+      session.lastMetaAfterChunkIndex = null; // Reset for new chapter
+    }
+
+    // Generate chapter title from the LLM
+    let generatedTitle = `Chapter ${chapter.order + 1}`;
+    try {
+      const narrativePreview = chunks.slice(0, 3).map(c => {
+        if (c.versions?.length) return c.versions[c.activeVersion ?? 0].narrative;
+        return c.narrative;
+      }).join('\n').slice(0, 1000);
+
+      const titleMessages = [
+        { role: 'system', content: 'You are a title generator. Given a narrative excerpt, suggest a short, evocative chapter title (3-6 words max). Return ONLY the title, nothing else.' },
+        { role: 'user', content: narrativePreview },
+      ];
+      const metaModel = settings.metaModel || settings.narrativeModel;
+      const { narrative: titleResult } = await generateCompletion(titleMessages, settings, metaModel, sessionId, 'title');
+      if (titleResult && titleResult.length < 80) {
+        generatedTitle = titleResult.replace(/["']/g, '').trim();
+      }
+    } catch (err) {
+      console.error('[Finalize] Title generation failed:', err.message);
+    }
+
+    // Finalize the chapter
+    chapter.finalized = true;
+    chapter.title = generatedTitle;
+
+    // Create new chapter
+    const newChapter = {
       id: uuidv4(),
-      title: title || `Chapter ${session.chapters.length + 1}`,
+      title: `Chapter ${session.chapters.length + 1}`,
       order: session.chapters.length,
+      finalized: false,
       createdAt: new Date().toISOString(),
     };
+    session.chapters.push(newChapter);
 
-    session.chapters.push(chapter);
     await writeJSON(path.join(SESSIONS_DIR, sessionId, 'session.json'), session);
 
-    res.status(201).json(chapter);
+    res.json({ finalizedChapter: chapter, newChapter });
   } catch (err) {
+    console.error('Finalize error:', err);
     res.status(err.status || 500).json({ message: err.message });
   }
 });

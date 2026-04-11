@@ -39,6 +39,7 @@
           </svg>
         </button>
         <button
+          v-if="!finalized"
           class="p-1 text-text-muted hover:text-accent transition-colors cursor-pointer"
           @click="startEdit"
           title="Edit chunk"
@@ -48,6 +49,7 @@
           </svg>
         </button>
         <button
+          v-if="!finalized"
           class="p-1 text-text-muted hover:text-error transition-colors cursor-pointer"
           @click="confirmDelete"
           title="Delete chunk"
@@ -150,8 +152,8 @@
     <!-- Display mode -->
     <div v-else class="prose-narrative" v-html="formattedNarrative"></div>
 
-    <!-- Version swipe arrows — always visible when versions exist or on any chunk -->
-    <div v-if="!editing" class="flex items-center justify-between mt-3">
+    <!-- Version swipe arrows — hidden when finalized -->
+    <div v-if="!editing && !finalized" class="flex items-center justify-between mt-3">
       <button
         class="w-10 h-10 flex items-center justify-center rounded-full text-lg transition-all cursor-pointer"
         :class="activeIndex > 0
@@ -179,6 +181,7 @@ const props = defineProps({
   chunk: Object,
   chunkIndex: Number,
   isLast: Boolean,
+  finalized: Boolean,
 });
 
 const emit = defineEmits(['regenerate', 'delete', 'edit', 'switchVersion']);

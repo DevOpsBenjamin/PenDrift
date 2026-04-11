@@ -12,6 +12,7 @@
         :chunk="chunk"
         :chunkIndex="i"
         :isLast="i === chunks.length - 1"
+        :finalized="finalized"
         @regenerate="(data) => $emit('regenerate', data)"
         @delete="(chunkId) => $emit('delete', chunkId)"
         @edit="$emit('edit', $event)"
@@ -34,6 +35,7 @@ import ChunkBlock from './ChunkBlock.vue';
 const props = defineProps({
   chunks: Array,
   generating: Boolean,
+  finalized: Boolean,
 });
 
 defineEmits(['regenerate', 'delete', 'edit', 'switchVersion']);

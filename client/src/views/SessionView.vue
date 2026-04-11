@@ -33,9 +33,10 @@
       <ChapterList
         :chapters="sessionStore.currentSession?.chapters || []"
         :currentChapterId="narrativeStore.currentChapterId"
+        :finalizing="finalizing"
         @select="switchChapter"
-        @create="createChapter"
         @rename="renameChapter"
+        @finalize="finalizeChapter"
       />
       <CharacterPanel
         :characters="narrativeStore.characters"
@@ -58,6 +59,7 @@
       <NarrativeDisplay
         :chunks="narrativeStore.currentChapterChunks"
         :generating="narrativeStore.generating"
+        :finalized="currentChapterFinalized"
         @regenerate="handleRegenerate"
         @delete="handleDelete"
         @edit="handleEdit"
@@ -65,6 +67,7 @@
       />
       <DirectiveInput
         :generating="narrativeStore.generating"
+        :finalized="currentChapterFinalized"
         @submit="handleGenerate"
       />
     </div>
@@ -99,7 +102,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useSessionStore } from '../stores/session.js';
 import { useNarrativeStore } from '../stores/narrative.js';
@@ -123,6 +126,13 @@ const showMetaHistory = ref(false);
 const metaHistory = ref([]);
 const showFactsEditor = ref(false);
 const facts = ref([]);
+const finalizing = ref(false);
+
+const currentChapterFinalized = computed(() => {
+  const ch = sessionStore.currentSession?.chapters?.find(c => c.id === narrativeStore.currentChapterId);
+  return ch?.finalized || false;
+});
+
 
 watch(showMetaHistory, async (open) => {
   if (open) {
@@ -152,17 +162,31 @@ async function switchChapter(chapterId) {
   sidebarOpen.value = false;
 }
 
-async function createChapter() {
-  const title = window.prompt('Chapter title:');
-  if (!title) return;
+async function finalizeChapter() {
+  if (!narrativeStore.currentChapterId) return;
+  finalizing.value = true;
   try {
-    const chapter = await api.post(`sessions/${sessionId}/chapters`, { json: { title } }).json();
-    sessionStore.currentSession.chapters.push(chapter);
+    const result = await api.post(`sessions/${sessionId}/chapters/finalize`, {
+      json: { chapterId: narrativeStore.currentChapterId },
+      timeout: 600000,
+    }).json();
+
+    // Update session chapters
+    const idx = sessionStore.currentSession.chapters.findIndex(c => c.id === result.finalizedChapter.id);
+    if (idx >= 0) {
+      sessionStore.currentSession.chapters[idx] = result.finalizedChapter;
+    }
+    sessionStore.currentSession.chapters.push(result.newChapter);
     narrativeStore.setChapters(sessionId, sessionStore.currentSession.chapters);
-    await narrativeStore.loadChapter(sessionId, chapter.id);
+
+    // Switch to new chapter
+    await narrativeStore.loadChapter(sessionId, result.newChapter.id);
+    await narrativeStore.loadCharacters(sessionId);
     sidebarOpen.value = false;
   } catch (err) {
     narrativeStore.error = err.message;
+  } finally {
+    finalizing.value = false;
   }
 }
 

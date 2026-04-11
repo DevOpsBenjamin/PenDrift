@@ -37,7 +37,7 @@ function getChunkNarrative(chunk) {
  * Only sends the last `chunkUpdateInterval` chunks (rolling window).
  * Meta marker inserted between chunks where the meta-analysis was performed.
  */
-export function buildMessages({ settings, characters, template, chunks, directive, importantFacts, lastMetaAfterChunkIndex }) {
+export function buildMessages({ settings, characters, template, chunks, directive, importantFacts, lastMetaAfterChunkIndex, previousChapterChunks }) {
   const messages = [];
   const vars = template?.variables || {};
   const resolve = (text) => resolveVariables(text, vars);
@@ -82,6 +82,15 @@ export function buildMessages({ settings, characters, template, chunks, directiv
   // 2. Rolling window of recent chunks as individual assistant messages
   const interval = settings.chunkUpdateInterval || 10;
   const recentChunks = chunks?.slice(-interval) || [];
+
+  // Cross-chapter context: if current chapter is empty, include last 2 chunks from previous chapter
+  if (recentChunks.length === 0 && previousChapterChunks?.length) {
+    const crossChunks = previousChapterChunks.slice(-2);
+    messages.push({ role: 'user', content: 'Context from the end of the previous chapter:' });
+    for (const c of crossChunks) {
+      messages.push({ role: 'assistant', content: getChunkNarrative(c) });
+    }
+  }
 
   if (recentChunks.length) {
     // Opening user message (required before first assistant)
