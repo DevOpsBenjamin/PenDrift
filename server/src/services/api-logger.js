@@ -1,31 +1,9 @@
 import path from 'node:path';
 import { SESSIONS_DIR } from '../utils/paths.js';
-import { readJSON, writeJSON, ensureDir, listFiles, fileExists } from './storage.js';
+import { readJSON, writeJSON, ensureDir, listFiles } from './storage.js';
 
 function logsDir(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'api-logs');
-}
-
-function legacyLogsFile(sessionId) {
-  return path.join(SESSIONS_DIR, sessionId, 'api-logs.json');
-}
-
-/**
- * Migrate from single api-logs.json to directory structure if needed.
- */
-async function migrateIfNeeded(sessionId) {
-  const legacy = legacyLogsFile(sessionId);
-  const dir = logsDir(sessionId);
-
-  if (await fileExists(legacy) && !(await fileExists(dir))) {
-    const logs = await readJSON(legacy) || [];
-    await ensureDir(dir);
-    for (let i = 0; i < logs.length; i++) {
-      await writeJSON(path.join(dir, `${String(i).padStart(4, '0')}.json`), logs[i]);
-    }
-    const fs = await import('node:fs/promises');
-    await fs.rename(legacy, legacy + '.bak');
-  }
 }
 
 async function getNextIndex(sessionId) {
@@ -41,7 +19,6 @@ async function getNextIndex(sessionId) {
  * Log the request BEFORE the API call. Returns the log index.
  */
 export async function logApiRequest(sessionId, { type, model, messages, params }) {
-  await migrateIfNeeded(sessionId);
   const idx = await getNextIndex(sessionId);
 
   const entry = {
@@ -84,7 +61,6 @@ export async function logApiResult(sessionId, logIndex, { response, error, durat
  * Get all API logs for a session (for the UI).
  */
 export async function getApiLogs(sessionId) {
-  await migrateIfNeeded(sessionId);
   const dir = logsDir(sessionId);
   const files = (await listFiles(dir, '.json')).sort();
   const logs = [];

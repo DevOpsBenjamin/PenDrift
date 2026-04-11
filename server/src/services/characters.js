@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { SESSIONS_DIR } from '../utils/paths.js';
-import { readJSON, writeJSON, ensureDir, listFiles, fileExists } from './storage.js';
+import { readJSON, writeJSON, ensureDir, listFiles } from './storage.js';
 import { generateCompletion } from './llm.js';
 import { buildMetaAnalysisMessages } from './prompts.js';
 import { getFacts, addFacts } from './facts.js';
@@ -13,23 +13,6 @@ function metaHistoryDir(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'meta-history');
 }
 
-function legacyMetaHistoryFile(sessionId) {
-  return path.join(SESSIONS_DIR, sessionId, 'meta-history.json');
-}
-
-async function migrateMetaHistory(sessionId) {
-  const legacy = legacyMetaHistoryFile(sessionId);
-  const dir = metaHistoryDir(sessionId);
-  if (await fileExists(legacy) && !(await fileExists(dir))) {
-    const entries = await readJSON(legacy) || [];
-    await ensureDir(dir);
-    for (let i = 0; i < entries.length; i++) {
-      await writeJSON(path.join(dir, `${String(i).padStart(4, '0')}.json`), entries[i]);
-    }
-    const fs = await import('node:fs/promises');
-    await fs.rename(legacy, legacy + '.bak');
-  }
-}
 
 export async function getCharacters(sessionId) {
   return await readJSON(charactersFile(sessionId)) || [];
@@ -40,7 +23,6 @@ export async function saveCharacters(sessionId, characters) {
 }
 
 export async function getMetaHistory(sessionId) {
-  await migrateMetaHistory(sessionId);
   const dir = metaHistoryDir(sessionId);
   await ensureDir(dir);
   const files = (await listFiles(dir, '.json')).sort();
