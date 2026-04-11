@@ -68,12 +68,14 @@ export async function createSession({ templateId, title, settingsPresetId }) {
 
   await ensureDir(path.join(sessionDir(sessionId), 'assets', 'images'));
   await ensureDir(path.join(sessionDir(sessionId), 'assets', 'audio'));
+  await ensureDir(path.join(sessionDir(sessionId), 'chunks'));
+  await ensureDir(path.join(sessionDir(sessionId), 'api-logs'));
+  await ensureDir(path.join(sessionDir(sessionId), 'meta-history'));
+  await writeJSON(path.join(sessionDir(sessionId), 'chunks', 'order.json'), []);
   await writeJSON(sessionFile(sessionId), session);
-  await writeJSON(chunksFile(sessionId), []);
   await writeJSON(charactersFile(sessionId), characters);
   await writeJSON(summariesFile(sessionId), []);
   await writeJSON(factsFile(sessionId), []);
-  await writeJSON(path.join(sessionDir(sessionId), 'meta-history.json'), []);
 
   return session;
 }

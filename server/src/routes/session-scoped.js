@@ -274,38 +274,32 @@ router.delete('/chunks/:chunkId/version', async (req, res) => {
     const { chunkId } = req.params;
     const { versionIndex } = req.body;
 
-    const { getChunks } = await import('../services/chunks.js');
-    const chunks = await getChunks(sessionId);
-    const chunk = chunks.find(c => c.id === chunkId);
+    const { getChunkById, saveChunk, deleteLastChunk: delChunk } = await import('../services/chunks.js');
+    const { readJSON: rJSON, writeJSON: wJSON, deleteFile: delFile } = await import('../services/storage.js');
+    const { SESSIONS_DIR: SD } = await import('../utils/paths.js');
+    const p = await import('node:path');
+
+    const chunk = await getChunkById(sessionId, chunkId);
     if (!chunk) {
       return res.status(404).json({ message: 'Chunk not found' });
     }
 
-    // Migrate legacy if needed
-    if (!chunk.versions) {
-      // Legacy chunk with no versions — delete the whole chunk
-      const filtered = chunks.filter(c => c.id !== chunkId);
-      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'chunks.json'), filtered);
+    if (!chunk.versions || chunk.versions.length <= 1) {
+      // Delete the whole chunk
+      const orderPath = p.join(SD, sessionId, 'chunks', 'order.json');
+      const order = await rJSON(orderPath) || [];
+      await wJSON(orderPath, order.filter(id => id !== chunkId));
+      await delFile(p.join(SD, sessionId, 'chunks', `${chunkId}.json`));
       return res.json({ deleted: 'chunk' });
     }
 
     const idx = versionIndex ?? chunk.activeVersion ?? 0;
-
-    if (chunk.versions.length <= 1) {
-      // Last version — delete the whole chunk
-      const filtered = chunks.filter(c => c.id !== chunkId);
-      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'chunks.json'), filtered);
-      return res.json({ deleted: 'chunk' });
-    }
-
-    // Remove the version
     chunk.versions.splice(idx, 1);
-    // Adjust activeVersion
     if (chunk.activeVersion >= chunk.versions.length) {
       chunk.activeVersion = chunk.versions.length - 1;
     }
 
-    await writeJSON(path.join(SESSIONS_DIR, sessionId, 'chunks.json'), chunks);
+    await saveChunk(sessionId, chunk);
     res.json({ deleted: 'version', chunk });
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });
@@ -357,10 +351,8 @@ router.get('/meta/status', (req, res) => {
 router.get('/api-logs', async (req, res) => {
   try {
     const sessionId = req.params.sessionId || req.sessionId;
-    const { readJSON } = await import('../services/storage.js');
-    const { SESSIONS_DIR } = await import('../utils/paths.js');
-    const path = await import('node:path');
-    const logs = await readJSON(path.join(SESSIONS_DIR, sessionId, 'api-logs.json')) || [];
+    const { getApiLogs } = await import('../services/api-logger.js');
+    const logs = await getApiLogs(sessionId);
     res.json(logs);
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message });

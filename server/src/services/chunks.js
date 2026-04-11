@@ -1,14 +1,59 @@
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { SESSIONS_DIR } from '../utils/paths.js';
-import { readJSON, writeJSON } from './storage.js';
+import { readJSON, writeJSON, ensureDir, listFiles, fileExists, deleteFile } from './storage.js';
 
-function chunksFile(sessionId) {
+function chunksDir(sessionId) {
+  return path.join(SESSIONS_DIR, sessionId, 'chunks');
+}
+
+function chunkFile(sessionId, chunkId) {
+  return path.join(chunksDir(sessionId), `${chunkId}.json`);
+}
+
+function orderFile(sessionId) {
+  return path.join(chunksDir(sessionId), 'order.json');
+}
+
+function legacyChunksFile(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'chunks.json');
 }
 
+/**
+ * Migrate from single chunks.json to directory structure if needed.
+ */
+async function migrateIfNeeded(sessionId) {
+  const legacy = legacyChunksFile(sessionId);
+  const dir = chunksDir(sessionId);
+
+  if (await fileExists(legacy) && !(await fileExists(orderFile(sessionId)))) {
+    console.log(`[Migration] Migrating chunks for session ${sessionId.slice(0, 8)}...`);
+    const chunks = await readJSON(legacy) || [];
+    await ensureDir(dir);
+
+    const order = [];
+    for (const chunk of chunks) {
+      await writeJSON(chunkFile(sessionId, chunk.id), chunk);
+      order.push(chunk.id);
+    }
+    await writeJSON(orderFile(sessionId), order);
+
+    // Rename old file as backup
+    const fs = await import('node:fs/promises');
+    await fs.rename(legacy, legacy + '.bak');
+    console.log(`[Migration] Done — ${chunks.length} chunks migrated`);
+  }
+}
+
 export async function getChunks(sessionId) {
-  return await readJSON(chunksFile(sessionId)) || [];
+  await migrateIfNeeded(sessionId);
+  const order = await readJSON(orderFile(sessionId)) || [];
+  const chunks = [];
+  for (const id of order) {
+    const chunk = await readJSON(chunkFile(sessionId, id));
+    if (chunk) chunks.push(chunk);
+  }
+  return chunks;
 }
 
 export async function getChunksByChapter(sessionId, chapterId) {
@@ -16,29 +61,18 @@ export async function getChunksByChapter(sessionId, chapterId) {
   return chunks.filter(c => c.chapterId === chapterId);
 }
 
-/**
- * Get the active version of a chunk.
- */
 export function getActiveVersion(chunk) {
-  if (!chunk.versions?.length) {
-    // Legacy chunk without versions — return the chunk itself
-    return chunk;
-  }
+  if (!chunk.versions?.length) return chunk;
   return chunk.versions[chunk.activeVersion ?? 0];
 }
 
-/**
- * Get the active narrative text from a chunk.
- */
 export function getActiveNarrative(chunk) {
   return getActiveVersion(chunk).narrative;
 }
 
-/**
- * Create a new chunk with its first version.
- */
 export async function appendChunk(sessionId, { chapterId, narrative, thinking, stats, directive, isKeyMoment, from }) {
-  const chunks = await getChunks(sessionId);
+  await migrateIfNeeded(sessionId);
+  await ensureDir(chunksDir(sessionId));
 
   const chunk = {
     id: uuidv4(),
@@ -61,17 +95,18 @@ export async function appendChunk(sessionId, { chapterId, narrative, thinking, s
     audioPath: null,
   };
 
-  chunks.push(chunk);
-  await writeJSON(chunksFile(sessionId), chunks);
+  await writeJSON(chunkFile(sessionId, chunk.id), chunk);
+
+  const order = await readJSON(orderFile(sessionId)) || [];
+  order.push(chunk.id);
+  await writeJSON(orderFile(sessionId), order);
+
   return chunk;
 }
 
-/**
- * Add a new version to an existing chunk (swipe/retry/edit).
- */
 export async function addChunkVersion(sessionId, chunkId, { narrative, thinking, stats, directive, from }) {
-  const chunks = await getChunks(sessionId);
-  const chunk = chunks.find(c => c.id === chunkId);
+  await migrateIfNeeded(sessionId);
+  const chunk = await readJSON(chunkFile(sessionId, chunkId));
   if (!chunk) {
     throw Object.assign(new Error('Chunk not found'), { status: 404 });
   }
@@ -83,6 +118,7 @@ export async function addChunkVersion(sessionId, chunkId, { narrative, thinking,
       thinking: chunk.thinking || null,
       stats: chunk.stats || null,
       directive: chunk.directive || null,
+      from: chunk.from || null,
       createdAt: chunk.createdAt,
     }];
     chunk.activeVersion = 0;
@@ -103,16 +139,12 @@ export async function addChunkVersion(sessionId, chunkId, { narrative, thinking,
   });
   chunk.activeVersion = newIndex;
 
-  await writeJSON(chunksFile(sessionId), chunks);
+  await writeJSON(chunkFile(sessionId, chunkId), chunk);
   return chunk;
 }
 
-/**
- * Set which version is active for a chunk.
- */
 export async function setActiveVersion(sessionId, chunkId, versionIndex) {
-  const chunks = await getChunks(sessionId);
-  const chunk = chunks.find(c => c.id === chunkId);
+  const chunk = await readJSON(chunkFile(sessionId, chunkId));
   if (!chunk) {
     throw Object.assign(new Error('Chunk not found'), { status: 404 });
   }
@@ -121,11 +153,13 @@ export async function setActiveVersion(sessionId, chunkId, versionIndex) {
   }
 
   chunk.activeVersion = versionIndex;
-  await writeJSON(chunksFile(sessionId), chunks);
+  await writeJSON(chunkFile(sessionId, chunkId), chunk);
   return chunk;
 }
 
 export async function deleteLastChunk(sessionId, chapterId) {
+  await migrateIfNeeded(sessionId);
+  const order = await readJSON(orderFile(sessionId)) || [];
   const chunks = await getChunks(sessionId);
   const chapterChunks = chunks.filter(c => c.chapterId === chapterId);
 
@@ -134,12 +168,33 @@ export async function deleteLastChunk(sessionId, chapterId) {
   }
 
   const lastChunk = chapterChunks[chapterChunks.length - 1];
-  const filtered = chunks.filter(c => c.id !== lastChunk.id);
-  await writeJSON(chunksFile(sessionId), filtered);
+
+  // Remove from order
+  const newOrder = order.filter(id => id !== lastChunk.id);
+  await writeJSON(orderFile(sessionId), newOrder);
+
+  // Delete chunk file
+  await deleteFile(chunkFile(sessionId, lastChunk.id));
+
   return lastChunk;
 }
 
 export async function getLastChunk(sessionId, chapterId) {
   const chunks = await getChunksByChapter(sessionId, chapterId);
   return chunks[chunks.length - 1] || null;
+}
+
+/**
+ * Get a single chunk by ID.
+ */
+export async function getChunkById(sessionId, chunkId) {
+  await migrateIfNeeded(sessionId);
+  return await readJSON(chunkFile(sessionId, chunkId));
+}
+
+/**
+ * Save a single chunk (for direct edits from routes).
+ */
+export async function saveChunk(sessionId, chunk) {
+  await writeJSON(chunkFile(sessionId, chunk.id), chunk);
 }

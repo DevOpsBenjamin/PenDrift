@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { SESSIONS_DIR } from '../utils/paths.js';
-import { readJSON, writeJSON } from './storage.js';
+import { readJSON, writeJSON, ensureDir, listFiles, fileExists } from './storage.js';
 import { generateCompletion } from './llm.js';
 import { buildMetaAnalysisMessages } from './prompts.js';
 import { getFacts, addFacts } from './facts.js';
@@ -9,8 +9,26 @@ function charactersFile(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'characters.json');
 }
 
-function metaHistoryFile(sessionId) {
+function metaHistoryDir(sessionId) {
+  return path.join(SESSIONS_DIR, sessionId, 'meta-history');
+}
+
+function legacyMetaHistoryFile(sessionId) {
   return path.join(SESSIONS_DIR, sessionId, 'meta-history.json');
+}
+
+async function migrateMetaHistory(sessionId) {
+  const legacy = legacyMetaHistoryFile(sessionId);
+  const dir = metaHistoryDir(sessionId);
+  if (await fileExists(legacy) && !(await fileExists(dir))) {
+    const entries = await readJSON(legacy) || [];
+    await ensureDir(dir);
+    for (let i = 0; i < entries.length; i++) {
+      await writeJSON(path.join(dir, `${String(i).padStart(4, '0')}.json`), entries[i]);
+    }
+    const fs = await import('node:fs/promises');
+    await fs.rename(legacy, legacy + '.bak');
+  }
 }
 
 export async function getCharacters(sessionId) {
@@ -22,7 +40,24 @@ export async function saveCharacters(sessionId, characters) {
 }
 
 export async function getMetaHistory(sessionId) {
-  return await readJSON(metaHistoryFile(sessionId)) || [];
+  await migrateMetaHistory(sessionId);
+  const dir = metaHistoryDir(sessionId);
+  await ensureDir(dir);
+  const files = (await listFiles(dir, '.json')).sort();
+  const entries = [];
+  for (const file of files) {
+    const entry = await readJSON(path.join(dir, file));
+    if (entry) entries.push(entry);
+  }
+  return entries;
+}
+
+async function appendMetaHistory(sessionId, entry) {
+  const dir = metaHistoryDir(sessionId);
+  await ensureDir(dir);
+  const files = await listFiles(dir, '.json');
+  const idx = files.length;
+  await writeJSON(path.join(dir, `${String(idx).padStart(4, '0')}.json`), entry);
 }
 
 /**
@@ -106,9 +141,8 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
   } catch (err) {
     console.error('Meta-analysis failed:', err.message);
 
-    // Log the failure in history anyway
-    const history = await getMetaHistory(sessionId);
-    history.push({
+    // Log the failure in history
+    await appendMetaHistory(sessionId, {
       timestamp: new Date().toISOString(),
       chunkRange: {
         from: recentChunks[0]?.id,
@@ -117,8 +151,7 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
       status: 'failed',
       error: err.message,
       rawResponse,
-    });
-    await writeJSON(metaHistoryFile(sessionId), history);
+    }).catch(() => {});
 
     return { characters, consistencyFlags: [], importantFacts: [] };
   }
@@ -161,8 +194,7 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
   }
 
   // Save to meta history
-  const history = await getMetaHistory(sessionId);
-  history.push({
+  await appendMetaHistory(sessionId, {
     timestamp: now,
     chunkRange: {
       from: recentChunks[0]?.id,
@@ -178,7 +210,6 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
     },
     rawResponse,
   });
-  await writeJSON(metaHistoryFile(sessionId), history);
 
   return {
     characters,
