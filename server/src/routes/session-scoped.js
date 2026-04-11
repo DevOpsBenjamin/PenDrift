@@ -568,7 +568,8 @@ router.post('/chapters/finalize', async (req, res) => {
       titleMessages.push({ role: 'user', content: metaSummary + '\n\nBased on all of the above, suggest a chapter title.' });
 
       const metaModel = settings.metaModel || settings.narrativeModel;
-      const { narrative: titleResult } = await generateCompletion(titleMessages, settings, metaModel, sessionId, 'title');
+      const titleSettings = { ...settings, maxTokens: (settings.maxTokens || 1024) * 2 };
+      const { narrative: titleResult } = await generateCompletion(titleMessages, titleSettings, metaModel, sessionId, 'title');
       if (titleResult && titleResult.length < 80) {
         generatedTitle = titleResult.replace(/["']/g, '').trim();
       }
