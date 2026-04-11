@@ -34,7 +34,7 @@
           <span class="sm:hidden">{{ generating ? '...' : 'Go' }}</span>
         </button>
       </div>
-      <div class="flex justify-between items-center mt-2 text-xs text-text-muted">
+      <div v-if="!finalized" class="flex justify-between items-center mt-2 text-xs text-text-muted">
         <label class="flex items-center gap-1.5 cursor-pointer select-none hover:text-text-secondary transition-colors">
           <input
             type="checkbox"
@@ -44,7 +44,6 @@
           Key moment
         </label>
         <span class="hidden sm:inline opacity-50">Enter to send, Shift+Enter for newline</span>
-      </div>
       </div>
     </div>
   </div>
