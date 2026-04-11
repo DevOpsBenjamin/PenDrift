@@ -109,8 +109,9 @@ export async function runMetaAnalysis(sessionId, recentChunks, settings) {
   let result = null;
 
   try {
-    // Step 1: meta-analysis with the smart model
-    const response = await generateCompletion(messages, settings, metaModel, sessionId, 'meta');
+    // Step 1: meta-analysis with the smart model (double token budget)
+    const metaSettings = { ...settings, maxTokens: (settings.maxTokens || 1024) * 2 };
+    const response = await generateCompletion(messages, metaSettings, metaModel, sessionId, 'meta');
     rawResponse = response.raw;
 
     // Step 2: try parsing directly
