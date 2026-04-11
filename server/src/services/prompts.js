@@ -125,59 +125,61 @@ export function buildMessages({ settings, characters, template, chunks, directiv
  * Builds the messages array for the enriched meta-call.
  */
 export function buildMetaAnalysisMessages({ characters, recentChunks, importantFacts, metaPrompt, previousMetaResults }) {
-  const narrativeText = recentChunks.map(c => getChunkNarrative(c)).join('\n\n');
+  const messages = [];
 
-  const system = metaPrompt || `You are a narrative analyst. Analyze recent narrative events and maintain story consistency.
+  // 1. System prompt
+  messages.push({ role: 'system', content: metaPrompt || 'You are a narrative analyst. Return only valid JSON.' });
 
-Your tasks:
-1. UPDATE existing character sheets to reflect how they have evolved
-2. DETECT any new characters mentioned in the narrative and create sheets for them
-3. FLAG any consistency issues (name changes, contradictions, forgotten facts)
-4. EXTRACT important facts established in the narrative (locations, relationships, promises, secrets)
+  // 2. Current character sheets
+  messages.push({
+    role: 'user',
+    content: 'Here are the current character sheets. Update them based on the narrative that follows.',
+  });
+  messages.push({
+    role: 'assistant',
+    content: JSON.stringify(characters, null, 2),
+  });
 
-Return ONLY valid JSON in this exact format, no other text:
-{
-  "characterUpdates": [
-    { "name": "Character Name", "currentState": "updated state", "traits": ["trait1"], "keyEvents": ["event1"] }
-  ],
-  "newCharacters": [
-    { "name": "New Char", "currentState": "state", "traits": [], "keyEvents": ["first mentioned context"] }
-  ],
-  "consistencyFlags": ["any inconsistencies found"],
-  "importantFacts": ["key facts established in the narrative"]
-}`;
-
-  let userContent = `## Current Character Sheets\n${JSON.stringify(characters, null, 2)}`;
-
+  // 3. Established facts
   if (importantFacts?.length) {
-    userContent += `\n\n## Previously Established Facts\n${importantFacts.map(f => `- ${f}`).join('\n')}`;
+    messages.push({
+      role: 'user',
+      content: 'Here are the established facts. Keep all of them, only add new ones. Deduplicate if needed.',
+    });
+    messages.push({
+      role: 'assistant',
+      content: importantFacts.map(f => `- ${f}`).join('\n'),
+    });
   }
 
-  // Include previous meta-analysis results for continuity
+  // 4. Previous meta-analysis results (summaries only)
   if (previousMetaResults?.length) {
-    userContent += '\n\n## Previous Meta-Analysis Results (for reference — build on these, don\'t lose information)';
+    let summary = 'Previous analyses for reference (build on these):\n';
     for (const meta of previousMetaResults) {
-      userContent += `\n\n### Analysis at ${meta.timestamp}`;
       if (meta.result?.characterUpdates?.length) {
-        userContent += '\nCharacter updates: ' + meta.result.characterUpdates.map(c => `${c.name}: ${c.currentState}`).join('; ');
-      }
-      if (meta.result?.newCharacters?.length) {
-        userContent += '\nNew characters: ' + meta.result.newCharacters.map(c => c.name).join(', ');
+        summary += '\nUpdates: ' + meta.result.characterUpdates.map(c => `${c.name}: ${c.currentState}`).join('; ');
       }
       if (meta.result?.importantFacts?.length) {
-        userContent += '\nFacts found: ' + meta.result.importantFacts.join('; ');
-      }
-      if (meta.result?.consistencyFlags?.length) {
-        userContent += '\nFlags: ' + meta.result.consistencyFlags.join('; ');
+        summary += '\nFacts: ' + meta.result.importantFacts.join('; ');
       }
     }
+    messages.push({ role: 'user', content: summary });
   }
 
-  userContent += `\n\n## Recent Narrative\n${narrativeText}`;
-  userContent += '\n\nAnalyze the narrative above. Return only the JSON object.';
+  // 5. Recent narrative chunks — each as its own assistant message
+  messages.push({
+    role: 'user',
+    content: 'Here is the recent narrative to analyze:',
+  });
+  for (const chunk of recentChunks) {
+    messages.push({ role: 'assistant', content: getChunkNarrative(chunk) });
+  }
 
-  return [
-    { role: 'system', content: system },
-    { role: 'user', content: userContent },
-  ];
+  // 6. Final instruction
+  messages.push({
+    role: 'user',
+    content: 'Analyze the narrative above. Update characters, detect new ones, flag inconsistencies, extract facts. Return ONLY the JSON object.',
+  });
+
+  return messages;
 }
