@@ -510,10 +510,12 @@ router.post('/chapters/finalize', async (req, res) => {
     const settings = await getSettingsPreset(session.settingsPresetId);
     const chunks = await getChunksByChapter(sessionId, chapterId);
 
-    // Run meta-analysis on all chapter chunks
+    // Run meta-analysis on recent chunks (not all)
     if (chunks.length > 0) {
-      console.log(`[Finalize] Running meta-analysis on chapter "${chapter.title}" (${chunks.length} chunks)`);
-      await runMetaAnalysis(sessionId, chunks, settings);
+      const interval = settings.chunkUpdateInterval || 5;
+      const recentChunks = chunks.slice(-interval);
+      console.log(`[Finalize] Running meta-analysis on chapter "${chapter.title}" (${recentChunks.length} of ${chunks.length} chunks)`);
+      await runMetaAnalysis(sessionId, recentChunks, settings);
       session.lastMetaAfterChunkIndex = null; // Reset for new chapter
     }
 
