@@ -86,6 +86,8 @@
       v-if="showMetaHistory"
       :history="metaHistory"
       @close="showMetaHistory = false"
+      @retryMeta="handleRetryMeta"
+      @consolidateMeta="handleConsolidateMeta"
     />
 
     <!-- Error toast -->
@@ -239,6 +241,37 @@ function handleSwitchVersion({ chunkId, versionIndex }) {
     chunk.activeVersion = versionIndex;
     // Lazy persist in background, don't block UI
     generateApi.setChunkVersion(sessionId, chunkId, versionIndex).catch(() => {});
+  }
+}
+
+async function handleRetryMeta() {
+  try {
+    narrativeStore.metaUpdatePending = true;
+    await api.post(`sessions/${sessionId}/characters/update`, {
+      json: { chapterId: narrativeStore.currentChapterId },
+      timeout: 600000,
+    }).json();
+    await narrativeStore.loadCharacters(sessionId);
+    metaHistory.value = await charactersApi.getMetaHistory(sessionId);
+  } catch (err) {
+    narrativeStore.error = err.message;
+  } finally {
+    narrativeStore.metaUpdatePending = false;
+  }
+}
+
+async function handleConsolidateMeta() {
+  try {
+    narrativeStore.metaUpdatePending = true;
+    await api.post(`sessions/${sessionId}/characters/consolidate`, {
+      timeout: 600000,
+    }).json();
+    await narrativeStore.loadCharacters(sessionId);
+    metaHistory.value = await charactersApi.getMetaHistory(sessionId);
+  } catch (err) {
+    narrativeStore.error = err.message;
+  } finally {
+    narrativeStore.metaUpdatePending = false;
   }
 }
 

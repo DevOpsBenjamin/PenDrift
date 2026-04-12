@@ -14,6 +14,17 @@
           </button>
         </div>
 
+        <div class="flex gap-2 px-5 pt-3">
+          <button
+            class="px-3 py-1.5 text-xs bg-accent/10 text-accent rounded-lg hover:bg-accent/20 transition-all cursor-pointer"
+            @click="$emit('retryMeta')"
+          >Run Meta Now</button>
+          <button
+            class="px-3 py-1.5 text-xs bg-bg-surface text-text-secondary border border-border rounded-lg hover:text-text-primary transition-all cursor-pointer"
+            @click="$emit('consolidateMeta')"
+          >Consolidate Sheets</button>
+        </div>
+
         <div class="flex-1 overflow-y-auto p-5 space-y-4">
           <div v-if="history.length === 0" class="text-center text-text-muted italic py-10">
             No meta-analysis has run yet.
@@ -35,8 +46,12 @@
               >{{ entry.status }}</span>
             </div>
 
-            <div v-if="entry.status === 'failed'" class="text-xs text-error/80">
-              {{ entry.error }}
+            <div v-if="entry.status === 'failed'" class="flex items-center gap-2">
+              <span class="text-xs text-error/80 flex-1">{{ entry.error }}</span>
+              <button
+                class="px-2 py-1 text-[10px] bg-accent/10 text-accent rounded hover:bg-accent/20 transition-all cursor-pointer shrink-0"
+                @click="$emit('retryMeta')"
+              >Retry Meta</button>
             </div>
 
             <template v-if="entry.result">
@@ -94,7 +109,7 @@
 import { computed, ref } from 'vue';
 
 const props = defineProps({ history: Array });
-defineEmits(['close']);
+defineEmits(['close', 'retryMeta', 'consolidateMeta']);
 
 const expandedRaw = ref(null);
 const reversedHistory = computed(() => [...(props.history || [])].reverse());

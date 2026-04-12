@@ -408,6 +408,81 @@ router.post('/characters/update', async (req, res) => {
   }
 });
 
+// Consolidate character sheets — compress and deduplicate
+router.post('/characters/consolidate', async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId || req.sessionId;
+    const { saveCharacters } = await import('../services/characters.js');
+    const characters = await getCharacters(sessionId);
+    const importantFacts = await getFacts(sessionId);
+    const session = await getSession(sessionId);
+    const settings = await getSettingsPreset(session.settingsPresetId);
+
+    const consolidateMessages = [
+      { role: 'system', content: `You are a data compressor for character sheets.
+
+Your job: take the character sheets and facts below, and CONSOLIDATE them.
+
+Rules:
+- MERGE duplicate key events that describe the same moment into ONE shorter entry
+- REMOVE key events that are subsets of other events
+- Keep max 10 key events per character, prioritize the most narratively important
+- MERGE duplicate traits, keep max 8 personality traits (no physical descriptions)
+- MERGE duplicate facts, keep max 15 total
+- Do NOT lose any important information — compress, don't delete
+- Update currentState to reflect the LATEST state only
+
+Return ONLY valid JSON:
+{
+  "characters": [{ "name": "", "currentState": "", "traits": [], "keyEvents": [] }],
+  "facts": ["fact1", "fact2"]
+}` },
+      { role: 'user', content: `## Characters\n${JSON.stringify(characters, null, 2)}\n\n## Facts\n${JSON.stringify(importantFacts, null, 2)}\n\nConsolidate and compress. Return only the JSON.` },
+    ];
+
+    const metaModel = settings.metaModel || settings.narrativeModel;
+    const metaSettings = { ...settings, maxTokens: (settings.maxTokens || 1024) * 3 };
+    const { narrative: resultText } = await generateCompletion(consolidateMessages, metaSettings, metaModel, sessionId, 'consolidate');
+
+    // Parse result
+    let parsed;
+    try {
+      parsed = JSON.parse(resultText);
+    } catch {
+      const match = resultText.match(/```(?:json)?\s*([\s\S]*?)```/) || resultText.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[1] || match[0]);
+    }
+
+    if (parsed?.characters) {
+      // Preserve character names and merge
+      const consolidated = characters.map(existing => {
+        const update = parsed.characters.find(c => c.name === existing.name);
+        if (update) {
+          return {
+            ...existing,
+            currentState: update.currentState || existing.currentState,
+            traits: update.traits || existing.traits,
+            keyEvents: update.keyEvents || existing.keyEvents,
+            lastUpdated: new Date().toISOString(),
+          };
+        }
+        return existing;
+      });
+      await saveCharacters(sessionId, consolidated);
+    }
+
+    if (parsed?.facts) {
+      await writeJSON(path.join(SESSIONS_DIR, sessionId, 'facts.json'), parsed.facts);
+    }
+
+    const updatedChars = await getCharacters(sessionId);
+    res.json({ characters: updatedChars, facts: parsed?.facts || importantFacts });
+  } catch (err) {
+    console.error('Consolidate error:', err);
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 // Add a new character manually
 router.post('/characters', async (req, res) => {
   try {
