@@ -419,18 +419,28 @@ router.post('/characters/consolidate', async (req, res) => {
     const settings = await getSettingsPreset(session.settingsPresetId);
 
     const consolidateMessages = [
-      { role: 'system', content: `You are a data compressor for character sheets.
+      { role: 'system', content: `You are a data compressor for character sheets and story facts.
 
-Your job: take the character sheets and facts below, and CONSOLIDATE them.
+Your job: AGGRESSIVELY consolidate and compress. Be ruthless about merging.
 
-Rules:
-- MERGE duplicate key events that describe the same moment into ONE shorter entry
-- REMOVE key events that are subsets of other events
-- Keep max 10 key events per character, prioritize the most narratively important
-- MERGE duplicate traits, keep max 8 personality traits (no physical descriptions)
-- MERGE duplicate facts, keep max 15 total
-- Do NOT lose any important information — compress, don't delete
-- Update currentState to reflect the LATEST state only
+KEY EVENTS rules:
+- Multiple events about the SAME topic MUST be merged into ONE entry. Example: "talked about gifts", "discussed gift philosophy", "revealed gift preferences" → merge into ONE: "Had extended conversation about meaningful gifts vs generic ones"
+- Keep events VAGUE and SHORT. No unnecessary details. "Drew Ben's name for Secret Santa" not "Drew Ben's name for Secret Santa last Friday during a mandatory meeting that ran ten minutes overtime"
+- Max 7 events per character. If over 7, merge related events aggressively.
+- Events should capture WHAT CHANGED, not every detail of HOW.
+
+TRAITS rules:
+- Personality and behavioral ONLY. No physical descriptions.
+- Max 6 traits per character. Merge similar ones.
+- Traits reflect CURRENT state, not history.
+
+FACTS rules:
+- VAGUE and HIGH LEVEL. "Tara is making a shibari book as Ben's gift" not three separate facts about the book details.
+- Multiple facts about the same subject MUST be merged into ONE.
+- Max 10 facts total. Merge aggressively.
+- Remove facts that are obvious from character sheets.
+
+IMPORTANT: When in doubt, MERGE. Less is more. The goal is a clean, scannable summary, not a detailed log.
 
 Return ONLY valid JSON:
 {
