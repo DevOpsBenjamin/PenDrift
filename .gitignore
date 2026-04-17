@@ -6,3 +6,10 @@ client/dist/
 .env
 .DS_Store
 Thumbs.db
+
+# Python
+conda/
+server-python/env/
+__pycache__/
+*.pyc
+*.pyo
