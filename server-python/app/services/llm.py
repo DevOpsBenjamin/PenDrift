@@ -1,4 +1,21 @@
-"""LLM inference client — calls the local llama-server via HTTP."""
+"""LLM inference client — calls the local llama-server via HTTP.
+
+The shared core is `llama_sse_completion()`: an async generator that streams
+events from llama-server (delta, model, usage, first_token). Higher-level
+wrappers consume it differently:
+
+  - `generate_completion()` / `generate_narrative()` — buffer all deltas and
+    return the assembled response (used by meta, chub-import, title, query
+    callers that don't need live UI streaming).
+  - `services/llm_stream.py::stream_*` — parse the deltas character-by-character
+    through a structured-output parser to emit semantic events for the UI.
+
+All callers serialise through `_get_lock()`, so only one llama-server
+inference runs at a time. (`services/job_manager.py` enforces the same
+ordering at the job-manager level — both layers must agree, but the lock
+here is what physically stops two HTTP requests from racing into the
+single-slot llama-server process.)
+"""
 import asyncio
 import json
 import logging
@@ -12,20 +29,23 @@ from app.services import llm_activity
 
 log = logging.getLogger("pendrift.llm")
 
-# Serialization queue — only one LLM call at a time
+# ── Serialization queue ─────────────────────────────────
+# Only one LLM call hits llama-server at a time. Lazy-init so module import
+# works without a running event loop.
 _queue: asyncio.Lock | None = None
 
 
-def _get_lock():
+def _get_lock() -> asyncio.Lock:
     global _queue
     if _queue is None:
         _queue = asyncio.Lock()
     return _queue
 
 
+# ── Body builder ────────────────────────────────────────
 def _build_body(messages: list[dict], **kwargs) -> dict:
-    """Build the request body, only including set params."""
-    body: dict = {"messages": messages, "stream": False}
+    """Build the request body, including only set sampling params + grammar."""
+    body: dict = {"messages": messages}
     for k in ("temperature", "max_tokens", "top_p", "top_k", "min_p",
               "repeat_penalty", "presence_penalty", "frequency_penalty", "seed"):
         v = kwargs.get(k)
@@ -36,28 +56,63 @@ def _build_body(messages: list[dict], **kwargs) -> dict:
     return body
 
 
-async def _raw_completion(body: dict, activity_call=None) -> tuple[dict, int]:
-    """Stream from llama-server, assemble the full response, update live activity.
+def _extract_usage(data: dict, duration_ms: int) -> dict:
+    usage = data.get("usage", {}) or {}
+    return {
+        "durationMs": duration_ms,
+        "promptTokens": usage.get("prompt_tokens"),
+        "completionTokens": usage.get("completion_tokens"),
+        "totalTokens": usage.get("total_tokens"),
+    }
 
-    We always use stream=true so that `llm_activity` can reflect progress in
-    real time (tokens generated, tok/s) without having to poll llama-server's
-    /slots endpoint (which spams its log). The assembled response is returned
-    in the same shape as the non-streaming completion so callers are unchanged.
+
+# ── Shared SSE core ─────────────────────────────────────
+async def llama_sse_completion(
+    body: dict,
+    *,
+    activity_call=None,
+    kind: str = "completion",
+) -> AsyncIterator[dict]:
+    """Stream raw events from llama-server's /v1/chat/completions SSE.
+
+    Always uses streaming under the hood (so prompt-processing time and
+    token rate are observable in real time). Yields normalized events:
+
+      {"type": "first_token", "ms": int}
+      {"type": "delta", "text": str}             # only when delta.content non-empty
+      {"type": "model", "name": str}             # from chunk["model"]
+      {"type": "usage", "data": dict}            # from chunk["usage"]
+
+    Reasoning content (`delta.reasoning_content`) is counted but not yielded
+    — `chat_template_kwargs.enable_thinking=False` should already suppress
+    it, this is a defensive log path.
+
+    No terminal "done" event — the caller knows the stream is over by
+    StopAsyncIteration. Exceptions (httpx errors, CancelledError) propagate
+    so the caller can decide how to surface them.
+
+    Side effects:
+      - Logs `POST` line with kind/messages/grammar/max_tokens.
+      - Logs `SSE connected, waiting for first token…`.
+      - Heartbeat log every 10s while waiting for first token.
+      - Logs `first token after Xms`.
+      - Periodic progress log (`streaming… N tokens, X tok/s`) every ~5s.
+      - If `activity_call` provided, calls `llm_activity.set_request` once
+        and `update_progress` on each delta.
     """
     body = {
         **body,
         "stream": True,
         "stream_options": {"include_usage": True},
-        # Disable the model's built-in reasoning/<think> block. Our grammars
-        # already provide a `thinking` field, and when thinking mode is on
-        # llama-server routes tokens to `delta.reasoning_content` instead of
-        # `delta.content` — bypassing grammar and giving us empty content.
+        # Disable the model's built-in <think> block. Our grammars already
+        # include a `thinking` field; if we let the model emit a <think>
+        # tag llama-server routes those tokens to delta.reasoning_content
+        # and bypasses the grammar entirely, giving us empty content.
         "chat_template_kwargs": {"enable_thinking": False},
     }
     base = get_base_url()
     url = f"{base}/v1/chat/completions"
 
-    kind = activity_call.kind if activity_call else "completion"
     n_msgs = len(body.get("messages") or [])
     prompt_chars = sum(len(m.get("content") or "") for m in (body.get("messages") or []))
     has_grammar = "grammar" in body
@@ -70,7 +125,8 @@ async def _raw_completion(body: dict, activity_call=None) -> tuple[dict, int]:
     if activity_call is not None:
         llm_activity.set_request(activity_call, body)
 
-    # Heartbeat while waiting for first token (llama-server stays silent during prompt processing)
+    # Heartbeat while waiting for first token. llama-server stays silent
+    # during prompt processing so without this the log looks dead.
     heartbeat_stop = asyncio.Event()
 
     async def _heartbeat():
@@ -85,83 +141,110 @@ async def _raw_completion(body: dict, activity_call=None) -> tuple[dict, int]:
 
     hb_task = asyncio.create_task(_heartbeat())
 
-    content_pieces: list[str] = []
-    reasoning_pieces: list[str] = []
-    usage: dict = {}
-    model_name = ""
+    start = time.monotonic()
     first_token_at: float | None = None
     token_count = 0
     reasoning_token_count = 0
-    chunk_count = 0
-    bad_chunks = 0
     last_progress_log = 0.0
+    bad_chunks = 0
 
-    start = time.monotonic()
-    async with httpx.AsyncClient(timeout=600) as client:
-        async with client.stream("POST", url, json=body) as resp:
-            resp.raise_for_status()
-            log.info("[%s] SSE connected, waiting for first token…", kind)
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data_str = line[5:].strip()
-                if not data_str or data_str == "[DONE]":
-                    continue
-                try:
-                    chunk = json.loads(data_str)
-                except json.JSONDecodeError:
-                    bad_chunks += 1
-                    continue
-                chunk_count += 1
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            async with client.stream("POST", url, json=body) as resp:
+                resp.raise_for_status()
+                log.info("[%s] SSE connected, waiting for first token…", kind)
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        bad_chunks += 1
+                        continue
 
-                if chunk.get("model"):
-                    model_name = chunk["model"]
-                if chunk.get("usage"):
-                    usage = chunk["usage"]
+                    if chunk.get("model"):
+                        yield {"type": "model", "name": chunk["model"]}
+                    if chunk.get("usage"):
+                        yield {"type": "usage", "data": chunk["usage"]}
 
-                choices = chunk.get("choices") or []
-                if choices:
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
                     delta = choices[0].get("delta") or {}
                     reasoning_piece = delta.get("reasoning_content")
                     piece = delta.get("content")
 
                     if reasoning_piece:
-                        reasoning_pieces.append(reasoning_piece)
                         reasoning_token_count += 1
 
-                    if piece or reasoning_piece:
-                        if first_token_at is None:
-                            first_token_at = time.time()
-                            heartbeat_stop.set()
-                            log.info("[%s] first token after %dms", kind, int((time.monotonic() - start) * 1000))
+                    if (piece or reasoning_piece) and first_token_at is None:
+                        first_token_at = time.time()
+                        heartbeat_stop.set()
+                        ms = int((time.monotonic() - start) * 1000)
+                        log.info("[%s] first token after %dms", kind, ms)
+                        yield {"type": "first_token", "ms": ms}
 
-                    if piece:
-                        content_pieces.append(piece)
-                        token_count += 1
-                        if activity_call is not None:
-                            llm_activity.update_progress(
-                                activity_call,
-                                tokens=token_count,
-                                first_token_at=first_token_at,
-                            )
-                        # Periodic progress log (every ~5s)
-                        now = time.monotonic()
-                        if now - last_progress_log > 5.0:
-                            elapsed_gen = time.time() - first_token_at if first_token_at else 0
-                            rate = token_count / elapsed_gen if elapsed_gen > 0.1 else 0
-                            log.info("[%s] streaming… %d content tokens (%.1f tok/s)", kind, token_count, rate)
-                            last_progress_log = now
+                    if not piece:
+                        continue
 
-    heartbeat_stop.set()
-    try:
-        await hb_task
-    except asyncio.CancelledError:
-        pass
+                    token_count += 1
+                    if activity_call is not None:
+                        llm_activity.update_progress(
+                            activity_call,
+                            tokens=token_count,
+                            first_token_at=first_token_at,
+                        )
+
+                    now = time.monotonic()
+                    if now - last_progress_log > 5.0:
+                        elapsed_gen = time.time() - first_token_at if first_token_at else 0
+                        rate = token_count / elapsed_gen if elapsed_gen > 0.1 else 0
+                        log.info("[%s] streaming… %d content tokens (%.1f tok/s)",
+                                 kind, token_count, rate)
+                        last_progress_log = now
+
+                    yield {"type": "delta", "text": piece}
+    finally:
+        heartbeat_stop.set()
+        try:
+            await hb_task
+        except asyncio.CancelledError:
+            pass
+        if bad_chunks:
+            log.warning("[%s] dropped %d malformed SSE chunks", kind, bad_chunks)
+        if reasoning_token_count:
+            log.info("[%s] saw %d reasoning_content tokens (likely model defied enable_thinking=False)",
+                     kind, reasoning_token_count)
+
+
+# ── Buffered consumers (no live streaming to UI) ────────
+async def _buffered_completion(
+    body: dict,
+    activity_call,
+    kind: str,
+) -> tuple[dict, int]:
+    """Consume `llama_sse_completion` into a buffered response shaped like
+    the non-streaming OpenAI completion. Returns (assembled, duration_ms)."""
+    content_pieces: list[str] = []
+    usage: dict = {}
+    model_name = ""
+    start = time.monotonic()
+
+    async for ev in llama_sse_completion(body, activity_call=activity_call, kind=kind):
+        if ev["type"] == "delta":
+            content_pieces.append(ev["text"])
+        elif ev["type"] == "model":
+            model_name = ev["name"]
+        elif ev["type"] == "usage":
+            usage = ev["data"]
+
     duration_ms = int((time.monotonic() - start) * 1000)
-    log.info(
-        "[%s] done  content_tokens=%d  reasoning_tokens=%d  chunks=%d  bad_chunks=%d  duration=%dms  usage=%s",
-        kind, token_count, reasoning_token_count, chunk_count, bad_chunks, duration_ms, usage or "-",
-    )
+    log.info("[%s] done  content_tokens~=%d  duration=%dms  usage=%s",
+             kind, len(content_pieces), duration_ms, usage or "-")
+
     assembled = {
         "choices": [{"message": {"content": "".join(content_pieces)}}],
         "model": model_name,
@@ -169,18 +252,6 @@ async def _raw_completion(body: dict, activity_call=None) -> tuple[dict, int]:
     }
     return assembled, duration_ms
 
-
-def _extract_usage(data: dict, duration_ms: int) -> dict:
-    usage = data.get("usage", {})
-    return {
-        "durationMs": duration_ms,
-        "promptTokens": usage.get("prompt_tokens"),
-        "completionTokens": usage.get("completion_tokens"),
-        "totalTokens": usage.get("total_tokens"),
-    }
-
-
-# ── Narrative generation (grammar-structured) ───────────
 
 async def generate_narrative(
     messages: list[dict],
@@ -196,17 +267,13 @@ async def generate_narrative(
     seed: int | None = None,
     session_id: str | None = None,
 ) -> dict:
-    """Grammar-constrained narrative generation.
+    """Grammar-constrained narrative generation, buffered.
 
-    Returns:
-        {
-            "thinking": str,
-            "type": "narrative" | "suggestion",
-            "narrative": str,
-            "suggestions": list[str],
-            "stats": dict,
-            "modelName": str,
-        }
+    Used by the legacy non-SSE `/generate` and `/regenerate` endpoints. The
+    SSE narrative pipeline uses `services/llm_stream.py::stream_narrative`
+    which sees the same tokens but emits live events.
+
+    Returns: {thinking, type, narrative, suggestions, stats, modelName, raw}.
     """
     from app.utils.grammars import NARRATIVE_GRAMMAR
 
@@ -217,25 +284,21 @@ async def generate_narrative(
             llm_activity.mark_running(call)
             body = _build_body(
                 messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                top_k=top_k,
-                min_p=min_p,
+                temperature=temperature, max_tokens=max_tokens,
+                top_p=top_p, top_k=top_k, min_p=min_p,
                 repeat_penalty=repeat_penalty,
                 presence_penalty=presence_penalty,
                 frequency_penalty=frequency_penalty,
                 seed=seed,
                 grammar=NARRATIVE_GRAMMAR,
             )
-            data, duration_ms = await _raw_completion(body, activity_call=call)
+            data, duration_ms = await _buffered_completion(body, call, "narrative")
 
         raw = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
         stats = _extract_usage(data, duration_ms)
         model = data.get("model", "")
         llm_activity.mark_done(call, stats=stats, model=model, raw_response=raw)
         parsed = json.loads(raw)
-
         return {
             "thinking": parsed.get("thinking", ""),
             "type": parsed.get("type", "narrative"),
@@ -252,8 +315,6 @@ async def generate_narrative(
         llm_activity.mark_done(call, error=str(e))
         raise
 
-
-# ── Generic completion (with optional grammar) ──────────
 
 async def generate_completion(
     messages: list[dict],
@@ -272,11 +333,10 @@ async def generate_completion(
     session_id: str | None = None,
 ) -> dict:
     """Generic grammar-constrained completion for utility calls (title gen,
-    chub import, consolidate). The grammar is expected to produce JSON with a
-    leading `thinking` field; callers json.loads(result["raw"]) and pick their
-    own fields.
+    chub import, meta-analysis, character consolidation).
 
-    Returns {raw, stats, modelName}.
+    Callers `json.loads(result["raw"])` and pick their own fields.
+    Returns: {raw, stats, modelName}.
     """
     call = llm_activity.register(kind, session_id)
     llm_activity.attach_task(call, asyncio.current_task())
@@ -285,62 +345,24 @@ async def generate_completion(
             llm_activity.mark_running(call)
             body = _build_body(
                 messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                top_p=top_p,
-                top_k=top_k,
-                min_p=min_p,
+                temperature=temperature, max_tokens=max_tokens,
+                top_p=top_p, top_k=top_k, min_p=min_p,
                 repeat_penalty=repeat_penalty,
                 presence_penalty=presence_penalty,
                 frequency_penalty=frequency_penalty,
                 seed=seed,
                 grammar=grammar,
             )
-            data, duration_ms = await _raw_completion(body, activity_call=call)
+            data, duration_ms = await _buffered_completion(body, call, kind)
 
         raw_content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
         stats = _extract_usage(data, duration_ms)
         model = data.get("model", "")
         llm_activity.mark_done(call, stats=stats, model=model, raw_response=raw_content)
-
-        return {
-            "raw": raw_content,
-            "stats": stats,
-            "modelName": model,
-        }
+        return {"raw": raw_content, "stats": stats, "modelName": model}
     except asyncio.CancelledError:
         llm_activity.mark_done(call, error="cancelled")
         raise
     except Exception as e:
         llm_activity.mark_done(call, error=str(e))
         raise
-
-
-# ── Streaming (for future SSE) ──────────────────────────
-
-async def generate_completion_stream(
-    messages: list[dict],
-    **kwargs,
-) -> AsyncIterator[str]:
-    """SSE streaming completion. Yields text chunks."""
-    async with _get_lock():
-        base = get_base_url()
-        url = f"{base}/v1/chat/completions"
-
-        body = _build_body(messages, **kwargs)
-        body["stream"] = True
-
-        async with httpx.AsyncClient(timeout=600) as client:
-            async with client.stream("POST", url, json=body) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[6:]
-                    if payload.strip() == "[DONE]":
-                        break
-                    chunk = json.loads(payload)
-                    delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-                    content = delta.get("content", "")
-                    if content:
-                        yield content
