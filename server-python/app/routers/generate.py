@@ -401,7 +401,9 @@ async def query_streaming(session_id: str, body: dict):
     # consultant must see the same fresh state as the narrative model would.
     # Chunks have UUID ids, so ordering by id is lexicographic-random; we
     # have to order by (chapter.order, chunk.order) to get true recency.
-    n_recent = max(1, int(settings.get("recentChunksCount", 5)))
+    # Same window as the narrative on purpose: one knob, no drift between
+    # what the writer sees and what the analyst sees.
+    n_recent = max(1, int(settings.get("chunkUpdateInterval", 10)))
     recent_rows = await db.execute_fetchall(
         '''SELECT c.id, c.chapter_id, c."order", c.active_version, c.versions
            FROM chunks c

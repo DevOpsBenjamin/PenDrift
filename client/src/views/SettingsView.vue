@@ -265,19 +265,14 @@
           Total generation budget: {{ (editing.thinkingTokens || 0) + (editing.narrativeTokens || 0) + (editing.suggestionTokens || 0) }} tokens
         </p>
 
-        <div class="grid grid-cols-2 gap-3">
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Update Interval</label>
-            <input v-model.number="editing.chunkUpdateInterval" type="number" min="1"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     focus:outline-none focus:border-accent transition-colors" />
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Recent Chunks</label>
-            <input v-model.number="editing.recentChunksCount" type="number" min="1"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     focus:outline-none focus:border-accent transition-colors" />
-          </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Recent Chunks Window</label>
+          <input v-model.number="editing.chunkUpdateInterval" type="number" min="1"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                   focus:outline-none focus:border-accent transition-colors" />
+          <p class="text-xs text-text-muted">
+            How many recent chunks the model sees on each call (narrative, ask, etc.) — and the cadence at which meta-analysis re-runs over that same window.
+          </p>
         </div>
 
         <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Prompts</h3>
@@ -537,7 +532,7 @@ function startNew() {
         presencePenalty: 1.5, frequencyPenalty: null, repeatPenalty: null, seed: null,
         maxTokens: 10240, contextSize: 65536,
         thinkingTokens: 1500, narrativeTokens: 500, suggestionTokens: 200,
-        recentChunksCount: 20, chunkUpdateInterval: 5,
+        chunkUpdateInterval: 5,
       };
   template.id = '';
   template.name = '';

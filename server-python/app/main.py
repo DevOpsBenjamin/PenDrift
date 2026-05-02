@@ -73,6 +73,37 @@ try:
         )
 except Exception as _e:
     logging.getLogger("pendrift.startup").warning("Prompts migration error: %s", _e)
+
+
+def _migrate_strip_recent_chunks_count() -> int:
+    """Drop the obsolete `recentChunksCount` field from existing user preset
+    JSONs. The Ask flow used to have its own window; it now shares the
+    narrative's `chunkUpdateInterval` so a single setting controls both."""
+    import json
+    settings_dir = DATA_DIR / "presets" / "settings"
+    if not settings_dir.is_dir():
+        return 0
+    updated = 0
+    for f in settings_dir.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if "recentChunksCount" in data:
+            del data["recentChunksCount"]
+            f.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            updated += 1
+    return updated
+
+
+try:
+    _dropped = _migrate_strip_recent_chunks_count()
+    if _dropped:
+        logging.getLogger("pendrift.startup").info(
+            "Dropped recentChunksCount from %d settings file(s) — narrative window is now shared", _dropped
+        )
+except Exception as _e:
+    logging.getLogger("pendrift.startup").warning("recentChunksCount migration error: %s", _e)
 # Note: cover images are now served by a dedicated route in the templates
 # router (GET /api/presets/templates/{id}/image), since each template's image
 # lives inside its own folder at <id>/image.<ext>.

@@ -18,6 +18,5 @@
   "narrativeTokens": 500,
   "suggestionTokens": 200,
   "contextSize": 65536,
-  "recentChunksCount": 20,
-  "chunkUpdateInterval": 5
+  "chunkUpdateInterval": 10
 }
