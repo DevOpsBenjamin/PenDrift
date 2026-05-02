@@ -75,13 +75,13 @@ async def _import_runner(job: Job, card: dict, settings: dict, url: str | None) 
 @router.post("/chub")
 async def import_from_chub(body: dict):
     """Import a character card from chub.ai URL or raw JSON and convert to a
-    PenDrift template. The result is ALWAYS saved as a new folder with
-    `0001.json` + `sources/0001-card.json` + avatar (if found).
+    PenDrift template.
 
-    Runs as a background job (visible in /api/jobs and the Activity view).
-    The HTTP request stays open until the job finishes — but the job
-    survives client disconnect, so a refresh during a long import still
-    leaves the template on disk.
+    Returns immediately with `{jobId, originalCard}`. The actual conversion
+    + save runs as a background job (visible in /api/jobs and the toast bar).
+    The job survives client disconnect — the template lands on disk
+    whether or not the user is still watching. Result schema once done:
+    `{template, saved: true, originalCard}` available via GET /api/jobs/{id}.
 
     Body:
     - url: chub.ai character URL
@@ -106,16 +106,16 @@ async def import_from_chub(body: dict):
         raise HTTPException(400, f"Could not fetch/parse card: {e}")
 
     label = f"Import · {card.get('name') or url or 'card'}"
-    job = await job_manager.run_and_wait(
+    job = job_manager.create_job(
         kind="chub-import",
         label=label,
         runner=lambda j: _import_runner(j, card, settings, url),
     )
-    if job.status == "cancelled":
-        raise HTTPException(499, "Import cancelled")
-    if job.status == "error":
-        raise HTTPException(502, f"Import failed: {job.error}")
-    return {**(job.result or {}), "jobId": job.id}
+    return {
+        "jobId": job.id,
+        "kind": "chub-import",
+        "originalCard": _build_card_summary(card),
+    }
 
 
 @router.post("/card-json")
@@ -144,13 +144,9 @@ async def import_from_json_upload(body: dict):
         j.emit({"type": "phase", "name": "done"})
 
     label = f"Import (JSON) · {card.get('name') or 'card'}"
-    job = await job_manager.run_and_wait(
+    job = job_manager.create_job(
         kind="chub-import",
         label=label,
         runner=_runner,
     )
-    if job.status == "cancelled":
-        raise HTTPException(499, "Import cancelled")
-    if job.status == "error":
-        raise HTTPException(502, f"Import failed: {job.error}")
-    return {**(job.result or {}), "jobId": job.id}
+    return {"jobId": job.id, "kind": "chub-import"}

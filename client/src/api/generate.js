@@ -1,22 +1,9 @@
 import api from './client.js';
 
-export const startGeneration = (sessionId, { chapterId, directive, isKeyMoment }) =>
-  api.post(`sessions/${sessionId}/generate`, {
-    json: { chapterId, directive, isKeyMoment },
-  }).json();
-
-export const startRegeneration = (sessionId, { chunkId, chapterId, directive }) =>
-  api.post(`sessions/${sessionId}/regenerate`, {
-    json: { chunkId, chapterId, directive },
-  }).json();
-
 export const setChunkVersion = (sessionId, chunkId, versionIndex) =>
   api.put(`sessions/${sessionId}/chunks/${chunkId}/version`, {
     json: { versionIndex },
   }).json();
-
-export const getJobStatus = (sessionId, jobId) =>
-  api.get(`sessions/${sessionId}/jobs/${jobId}`).json();
 
 export const deleteLastChunk = (sessionId, chapterId) =>
   api.delete(`sessions/${sessionId}/chunks/last`, {
@@ -62,7 +49,7 @@ export async function streamRegeneration(sessionId, { chunkId, directive }, onEv
 
 /**
  * Check whether a generation is currently in progress for the given session.
- * Returns {running, eventCount, done} or {running: false}.
+ * Returns {running, jobId, kind, eventCount, done} or {running: false}.
  */
 export async function getActiveStreamStatus(sessionId) {
   const resp = await fetch(`/api/sessions/${sessionId}/generate/stream/active`);
@@ -90,22 +77,10 @@ async function _consumeSSE(url, init, onEvent) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let chunkCount = 0;
-  let eventCount = 0;
-  console.log('[stream] connected, content-type:', resp.headers.get('content-type'));
   while (true) {
     const { value, done } = await reader.read();
-    if (done) {
-      console.log('[stream] reader done. chunks=%d events=%d', chunkCount, eventCount);
-      break;
-    }
-    chunkCount++;
-    const chunkText = decoder.decode(value, { stream: true });
-    buffer += chunkText;
-    if (chunkCount <= 5 || chunkCount % 50 === 0) {
-      console.log('[stream] reader chunk #%d size=%d bytes (buffer=%d)', chunkCount, chunkText.length, buffer.length);
-    }
-    // Parse SSE events: each event is `data: <json>\n\n`
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
     let nl;
     while ((nl = buffer.indexOf('\n\n')) >= 0) {
       const block = buffer.slice(0, nl);
@@ -115,13 +90,10 @@ async function _consumeSSE(url, init, onEvent) {
         const payload = line.slice(5).trim();
         if (!payload) continue;
         try {
-          const ev = JSON.parse(payload);
-          eventCount++;
-          if (eventCount <= 10 || eventCount % 100 === 0) {
-            console.log('[stream] event #%d type=%s', eventCount, ev.type, ev.text ? `"${ev.text}"` : '');
-          }
-          onEvent(ev);
-        } catch (e) { console.warn('[stream] bad payload:', payload.slice(0, 100), e); }
+          onEvent(JSON.parse(payload));
+        } catch (e) {
+          console.warn('[stream] bad payload:', payload.slice(0, 100), e);
+        }
       }
     }
   }

@@ -12,7 +12,6 @@ export const useNarrativeStore = defineStore('narrative', {
     characters: [],
     consistencyFlags: [],
     generating: false,
-    activeJobs: {},  // { sessionId: jobId } — legacy job-based fallback
     metaUpdatePending: false,
     error: null,
     // Streaming state (SSE-backed) — only one stream per session at a time
@@ -38,10 +37,6 @@ export const useNarrativeStore = defineStore('narrative', {
   },
 
   actions: {
-    isSessionGenerating(sessionId) {
-      return !!this.activeJobs[sessionId || this.currentSessionId];
-    },
-
     setChapters(sessionId, chapters) {
       this.currentSessionId = sessionId;
       this.chapters = chapters;
@@ -50,14 +45,7 @@ export const useNarrativeStore = defineStore('narrative', {
         this.currentChapterId = chapters[0].id;
       }
       this.chunks = [];
-      // Resume polling if this session has an active job
-      const existingJob = this.activeJobs[sessionId];
-      if (existingJob) {
-        this.generating = true;
-        this.pollJob(sessionId, existingJob);
-      } else {
-        this.generating = false;
-      }
+      this.generating = false;
     },
 
     async loadChapter(sessionId, chapterId) {
@@ -330,68 +318,6 @@ export const useNarrativeStore = defineStore('narrative', {
       } catch (err) {
         this.error = err.message;
       }
-    },
-
-    pollJob(sessionId, jobId) {
-      const poll = async () => {
-        // Stop polling if job was replaced
-        if (this.activeJobs[sessionId] !== jobId) return;
-
-        try {
-          const job = await generateApi.getJobStatus(sessionId, jobId);
-
-          if (job.status === 'done') {
-            delete this.activeJobs[sessionId];
-            if (this.currentSessionId === sessionId) {
-              this.generating = false;
-            }
-
-            if (job.result?.chunk) {
-              if (this.currentSessionId === sessionId) {
-                // Check if this is a version update (regenerate) or a new chunk
-                const existing = this.chunks.find(c => c.id === job.result.chunk.id);
-                if (existing) {
-                  // Update existing chunk with new versions
-                  existing.versions = job.result.chunk.versions;
-                  existing.activeVersion = job.result.chunk.activeVersion;
-                } else {
-                  // New chunk
-                  this.chunks.push(job.result.chunk);
-                }
-              }
-            }
-
-            if (job.result?.metaUpdatePending) {
-              this.metaUpdatePending = true;
-              this.pollMetaStatus(sessionId);
-            }
-          } else if (job.status === 'failed') {
-            delete this.activeJobs[sessionId];
-            if (this.currentSessionId === sessionId) {
-              this.generating = false;
-              this.error = job.error || 'Generation failed';
-            }
-          } else {
-            // Still generating, poll again
-            setTimeout(poll, 2000);
-          }
-        } catch (err) {
-          console.warn('[PenDrift] Poll error:', err.message || err);
-          // Retry a few times before giving up (server might have restarted)
-          pollRetries++;
-          if (pollRetries < 5) {
-            setTimeout(poll, 3000);
-          } else {
-            delete this.activeJobs[sessionId];
-            if (this.currentSessionId === sessionId) {
-              this.generating = false;
-              this.error = 'Lost connection to generation job. Refresh to check results.';
-            }
-          }
-        }
-      };
-      let pollRetries = 0;
-      setTimeout(poll, 1000);
     },
 
     pollMetaStatus(sessionId) {

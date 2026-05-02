@@ -180,15 +180,20 @@ async function submit() {
     } else {
       payload.card = fileCard.value;
     }
+    // Backend returns immediately with a jobId; the actual import runs in
+    // the background and the JobsToastBar shows live progress. The parent
+    // (TemplatesView) watches for the job to complete and refreshes its
+    // list at that point.
     const result = await importApi.importChub(payload);
-    emit('imported', result.template);
+    emit('queued', { jobId: result.jobId, originalCard: result.originalCard });
   } catch (err) {
     const body = err?.response && typeof err.response.json === 'function'
       ? await err.response.json().catch(() => null)
       : null;
     error.value = body?.detail || err?.message || 'Import failed';
-  } finally {
     loading.value = false;
+    return;
   }
+  loading.value = false;
 }
 </script>
