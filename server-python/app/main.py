@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
 from app.config import DATA_DIR, CLIENT_DIST
-from app.routers import sessions, templates, presets, generate, chapters, characters, chunks, api_logs, llm_management, facts, import_chub, prompts as prompts_router
+from app.routers import sessions, templates, presets, generate, chapters, characters, chunks, api_logs, llm_management, facts, import_chub, prompts as prompts_router, jobs as jobs_router
 
 
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.include_router(facts.router, prefix="/api/sessions/{session_id}/facts", tags
 app.include_router(api_logs.router, prefix="/api/sessions/{session_id}/api-logs", tags=["api-logs"])
 app.include_router(import_chub.router, prefix="/api/import", tags=["import"])
 app.include_router(prompts_router.router, prefix="/api/prompts", tags=["prompts"])
+app.include_router(jobs_router.router, prefix="/api/jobs", tags=["jobs"])
 
 
 @app.get("/api/health")
