@@ -397,11 +397,18 @@ async def query_streaming(session_id: str, body: dict):
     )
     facts = [r[0] for r in fact_rows]
 
-    # Last few chunks across all chapters for tone/state context — uses the
-    # same window size as the narrative so the consultant sees the same recency.
+    # Last few chunks across all chapters in chronological order — the
+    # consultant must see the same fresh state as the narrative model would.
+    # Chunks have UUID ids, so ordering by id is lexicographic-random; we
+    # have to order by (chapter.order, chunk.order) to get true recency.
     n_recent = max(1, int(settings.get("recentChunksCount", 5)))
     recent_rows = await db.execute_fetchall(
-        'SELECT id, chapter_id, "order", active_version, versions FROM chunks WHERE session_id = ? ORDER BY id DESC LIMIT ?',
+        '''SELECT c.id, c.chapter_id, c."order", c.active_version, c.versions
+           FROM chunks c
+           JOIN chapters ch ON c.chapter_id = ch.id
+           WHERE c.session_id = ?
+           ORDER BY ch."order" DESC, c."order" DESC
+           LIMIT ?''',
         (session_id, n_recent),
     )
     recent_chunks = [{"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]} for r in reversed(recent_rows)]
