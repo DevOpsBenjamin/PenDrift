@@ -368,8 +368,21 @@ def migrate_flat_files() -> int:
         template_id = entry.stem
         target_folder = TEMPLATES_DIR / template_id
         if target_folder.exists() and target_folder.is_dir():
-            # Folder already exists for this id — skip to avoid clobbering
-            log.warning("Cannot migrate %s: folder %s already exists", entry.name, target_folder)
+            # The folder already holds the canonical version. If it has a
+            # readable 0001.json, the flat file is a stale leftover from
+            # before the format change — delete it so the warning doesn't
+            # re-spam every startup. Otherwise leave both alone and warn,
+            # since something unusual is going on.
+            initial = target_folder / "0001.json"
+            if initial.is_file():
+                try:
+                    json.loads(initial.read_text(encoding="utf-8"))
+                    entry.unlink()
+                    log.info("Removed stale flat template %s (folder already migrated)", entry.name)
+                except (json.JSONDecodeError, OSError) as e:
+                    log.warning("Folder for %s exists but 0001.json unreadable (%s) — leaving flat file in place", entry.name, e)
+            else:
+                log.warning("Cannot migrate %s: folder %s exists but has no 0001.json", entry.name, target_folder)
             continue
         try:
             data = json.loads(entry.read_text(encoding="utf-8"))
