@@ -734,8 +734,10 @@ async function removeImage() {
   }
 }
 
-// Track chub-import jobs we've kicked off here so we can react when they
-// finish (refresh the sidebar, then open the freshly-imported template).
+// Track chub-imports we kicked off from THIS view so we can auto-open the
+// resulting template in the editor once the job finishes — but only if the
+// user is still on this view. (App.vue handles the global "refresh sidebar"
+// concern: that runs even if the user has navigated away.)
 const pendingImportJobs = ref({});  // { jobId: true }
 
 function onImportQueued({ jobId }) {
@@ -743,10 +745,6 @@ function onImportQueued({ jobId }) {
   pendingImportJobs.value[jobId] = true;
 }
 
-// When any of our pending import jobs becomes terminal, refresh the
-// templates list and (on success) open the new one. We can't tell which
-// id the LLM picked until the job completes — `job.events` carries the
-// final `done` payload with the saved template.
 watch(() => jobs.jobs, async (current) => {
   for (const jobId of Object.keys(pendingImportJobs.value)) {
     const j = current.find(x => x.id === jobId);
@@ -754,27 +752,23 @@ watch(() => jobs.jobs, async (current) => {
     if (j.status !== 'done' && j.status !== 'cancelled' && j.status !== 'error') continue;
 
     delete pendingImportJobs.value[jobId];
-    await store.fetchTemplates();
+    if (j.status !== 'done') continue;
 
-    if (j.status === 'done') {
-      // Look up the resulting template id from the job's stored result.
-      try {
-        const resp = await fetch(`/api/jobs/${jobId}`);
-        if (resp.ok) {
-          const detail = await resp.json();
-          const tpl = detail?.result?.template;
-          if (tpl) {
-            editing.value = ensureFields(JSON.parse(JSON.stringify(tpl)));
-            editingPristine.value = JSON.stringify(editing.value);
-            isNew.value = false;
-            expandedDiffs.value = {};
-            diffCache.value = {};
-            diffLoading.value = {};
-            loadSources();
-          }
-        }
-      } catch { /* sidebar still refreshed; user can click in */ }
-    }
+    // Pull the saved template from the job's result and open it.
+    try {
+      const resp = await fetch(`/api/jobs/${jobId}`);
+      if (!resp.ok) continue;
+      const detail = await resp.json();
+      const tpl = detail?.result?.template;
+      if (!tpl) continue;
+      editing.value = ensureFields(JSON.parse(JSON.stringify(tpl)));
+      editingPristine.value = JSON.stringify(editing.value);
+      isNew.value = false;
+      expandedDiffs.value = {};
+      diffCache.value = {};
+      diffLoading.value = {};
+      loadSources();
+    } catch { /* App.vue already refreshed the sidebar; user can click in */ }
   }
 }, { deep: true });
 
