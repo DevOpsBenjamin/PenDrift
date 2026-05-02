@@ -8,6 +8,8 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 
 from app.database import get_db
+from app.services import job_manager
+from app.services.job_manager import Job
 from app.services.meta_analysis import run_meta_analysis
 from app.services.title_generator import generate_chapter_title
 
@@ -81,14 +83,31 @@ async def finalize_chapter(session_id: str, body: dict):
     )
     chunks = [{"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]} for r in chunk_rows]
 
-    # Run meta on recent chunks
-    if chunks:
-        interval = settings.get("chunkUpdateInterval", 5)
-        await run_meta_analysis(session_id, chunks[-interval:], settings)
-        await db.execute("UPDATE sessions SET last_meta_after_chunk_index = NULL WHERE id = ?", (session_id,))
+    # Run meta + title gen as a single job so the toast bar can show one
+    # entry that progresses through both LLM calls. The job survives client
+    # disconnect — chapter finalization always lands on disk.
+    async def _runner(j: Job):
+        if chunks:
+            interval = settings.get("chunkUpdateInterval", 5)
+            j.emit({"type": "phase", "name": "meta"})
+            await run_meta_analysis(session_id, chunks[-interval:], settings, job=j)
+            await db.execute("UPDATE sessions SET last_meta_after_chunk_index = NULL WHERE id = ?", (session_id,))
+            await db.commit()
+        j.emit({"type": "phase", "name": "title"})
+        title_text = await generate_chapter_title(session_id, chunks, settings, chapter_order, job=j)
+        j.set_result({"title": title_text})
 
-    # Generate title
-    title = await generate_chapter_title(session_id, chunks, settings, chapter_order)
+    job = await job_manager.run_and_wait(
+        kind="finalize-chapter",
+        label=f"Finalize chapter · {chapter_id[:8]}",
+        session_id=session_id,
+        runner=_runner,
+    )
+    if job.status == "error":
+        raise HTTPException(502, f"Finalization failed: {job.error}")
+    if job.status == "cancelled":
+        raise HTTPException(499, "Finalization cancelled")
+    title = (job.result or {}).get("title") or f"Chapter {chapter_order + 1}"
 
     # Finalize
     await db.execute("UPDATE chapters SET finalized = 1, title = ? WHERE id = ?", (title, chapter_id))
@@ -131,7 +150,21 @@ async def regen_title(session_id: str, chapter_id: str):
     )
     chunks = [{"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]} for r in chunk_rows]
 
-    title = await generate_chapter_title(session_id, chunks, settings, ch[0][0])
+    async def _runner(j: Job):
+        title_text = await generate_chapter_title(session_id, chunks, settings, ch[0][0], job=j)
+        j.set_result({"title": title_text})
+
+    job = await job_manager.run_and_wait(
+        kind="title",
+        label=f"Regen title · {chapter_id[:8]}",
+        session_id=session_id,
+        runner=_runner,
+    )
+    if job.status == "error":
+        raise HTTPException(502, f"Title generation failed: {job.error}")
+    if job.status == "cancelled":
+        raise HTTPException(499, "Title generation cancelled")
+    title = (job.result or {}).get("title") or f"Chapter {ch[0][0] + 1}"
     await db.execute("UPDATE chapters SET title = ? WHERE id = ?", (title, chapter_id))
     await db.commit()
 

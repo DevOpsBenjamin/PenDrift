@@ -4,9 +4,11 @@ The shared core is `llama_sse_completion()`: an async generator that streams
 events from llama-server (delta, model, usage, first_token). Higher-level
 wrappers consume it differently:
 
-  - `generate_completion()` / `generate_narrative()` — buffer all deltas and
-    return the assembled response (used by meta, chub-import, title, query
-    callers that don't need live UI streaming).
+  - `generate_completion()` — buffers all deltas and returns the assembled
+    response (used by callers that don't need live UI streaming and aren't
+    routed through job_manager). Most modern code passes `job=...` directly
+    to the higher-level service (chub_importer, title_generator, etc.) so
+    LLM events stream into the job — this stays as the simple fallback.
   - `services/llm_stream.py::stream_*` — parse the deltas character-by-character
     through a structured-output parser to emit semantic events for the UI.
 
@@ -251,69 +253,6 @@ async def _buffered_completion(
         "usage": usage,
     }
     return assembled, duration_ms
-
-
-async def generate_narrative(
-    messages: list[dict],
-    *,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-    top_p: float | None = None,
-    top_k: int | None = None,
-    min_p: float | None = None,
-    repeat_penalty: float | None = None,
-    presence_penalty: float | None = None,
-    frequency_penalty: float | None = None,
-    seed: int | None = None,
-    session_id: str | None = None,
-) -> dict:
-    """Grammar-constrained narrative generation, buffered.
-
-    Used by the legacy non-SSE `/generate` and `/regenerate` endpoints. The
-    SSE narrative pipeline uses `services/llm_stream.py::stream_narrative`
-    which sees the same tokens but emits live events.
-
-    Returns: {thinking, type, narrative, suggestions, stats, modelName, raw}.
-    """
-    from app.utils.grammars import NARRATIVE_GRAMMAR
-
-    call = llm_activity.register("narrative", session_id)
-    llm_activity.attach_task(call, asyncio.current_task())
-    try:
-        async with _get_lock():
-            llm_activity.mark_running(call)
-            body = _build_body(
-                messages,
-                temperature=temperature, max_tokens=max_tokens,
-                top_p=top_p, top_k=top_k, min_p=min_p,
-                repeat_penalty=repeat_penalty,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
-                seed=seed,
-                grammar=NARRATIVE_GRAMMAR,
-            )
-            data, duration_ms = await _buffered_completion(body, call, "narrative")
-
-        raw = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-        stats = _extract_usage(data, duration_ms)
-        model = data.get("model", "")
-        llm_activity.mark_done(call, stats=stats, model=model, raw_response=raw)
-        parsed = json.loads(raw)
-        return {
-            "thinking": parsed.get("thinking", ""),
-            "type": parsed.get("type", "narrative"),
-            "narrative": parsed.get("narrative", ""),
-            "suggestions": parsed.get("suggestions", []),
-            "stats": stats,
-            "modelName": model,
-            "raw": raw,
-        }
-    except asyncio.CancelledError:
-        llm_activity.mark_done(call, error="cancelled")
-        raise
-    except Exception as e:
-        llm_activity.mark_done(call, error=str(e))
-        raise
 
 
 async def generate_completion(

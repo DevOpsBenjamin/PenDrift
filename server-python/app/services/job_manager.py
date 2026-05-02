@@ -195,6 +195,37 @@ def list_jobs() -> list[dict]:
     return active + historical
 
 
+async def run_and_wait(
+    *,
+    kind: str,
+    label: str,
+    runner: Callable[[Job], Awaitable[None]],
+    session_id: str | None = None,
+) -> Job:
+    """Create a job, await its completion, and return the finished Job.
+
+    Used by HTTP endpoints that want to keep their old sync contract while
+    still having the work tracked in /api/jobs and surviving client
+    disconnects: if the HTTP handler is cancelled (client closed the
+    connection), this raises CancelledError but the underlying job task
+    keeps running in the background — its result/effects (saved chunk,
+    template on disk, etc.) still land.
+
+    Caller should inspect `job.status` (`done` | `cancelled` | `error`)
+    and `job.result` / `job.error` to decide what to return.
+    """
+    job = create_job(kind=kind, label=label, runner=runner, session_id=session_id)
+    if job.task is not None:
+        try:
+            await job.task
+        except asyncio.CancelledError:
+            # Our await was cancelled (HTTP client disconnect). The detached
+            # job task keeps running thanks to `asyncio.create_task` in
+            # `create_job`. Re-raise so FastAPI tears down the request.
+            raise
+    return job
+
+
 def find_active_session_job(
     session_id: str,
     *,

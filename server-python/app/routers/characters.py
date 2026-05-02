@@ -1,14 +1,17 @@
 """Character and facts management routes."""
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
 from app.database import get_db
+from app.services import job_manager, llm_activity
+from app.services.job_manager import Job
+from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
 from app.services.meta_analysis import run_meta_analysis
-from app.services.llm import generate_completion
 from app.utils.grammars import CONSOLIDATE_GRAMMAR
 
 router = APIRouter()
@@ -108,8 +111,22 @@ async def trigger_meta(session_id: str, body: dict):
 
     interval = settings.get("chunkUpdateInterval", 10)
     recent = chunks[-interval:]
-    result = await run_meta_analysis(session_id, recent, settings)
-    return result
+
+    async def _runner(j: Job):
+        result = await run_meta_analysis(session_id, recent, settings, job=j)
+        j.set_result(result)
+
+    job = await job_manager.run_and_wait(
+        kind="meta",
+        label=f"Meta-analysis · {len(recent)} chunks",
+        session_id=session_id,
+        runner=_runner,
+    )
+    if job.status == "cancelled":
+        raise HTTPException(499, "Meta-analysis cancelled")
+    if job.status == "error":
+        raise HTTPException(502, f"Meta-analysis failed: {job.error}")
+    return job.result
 
 
 @router.post("/consolidate")
@@ -160,38 +177,82 @@ Return JSON: put your reasoning in `thinking`, then the compressed data:
         {"role": "user", "content": f"## Characters\n{json.dumps(characters, indent=2)}\n\n## Facts\n{json.dumps(facts, indent=2)}\n\nConsolidate and compress."},
     ]
 
-    result = await generate_completion(
-        consolidate_messages,
-        temperature=0.2,
-        max_tokens=(settings.get("maxTokens", 4096)) * 3,
-        grammar=CONSOLIDATE_GRAMMAR,
+    async def _runner(j: Job):
+        # Stream LLM events into the job so the toast bar can show live
+        # progress for what is otherwise a several-second LLM call.
+        body = _build_body(
+            consolidate_messages,
+            temperature=0.2,
+            max_tokens=(settings.get("maxTokens", 4096)) * 3,
+            grammar=CONSOLIDATE_GRAMMAR,
+        )
+        call = llm_activity.register("consolidate", session_id)
+        llm_activity.attach_task(call, asyncio.current_task())
+        full: list[str] = []
+        usage: dict = {}
+        model_name = ""
+        try:
+            async with _get_lock():
+                llm_activity.mark_running(call)
+                j.emit({"type": "llm_start", "kind": "consolidate", "callId": call.id})
+                async for ev in llama_sse_completion(body, activity_call=call, kind="consolidate"):
+                    if ev["type"] == "delta":
+                        full.append(ev["text"])
+                    elif ev["type"] == "model":
+                        model_name = ev["name"]
+                    elif ev["type"] == "usage":
+                        usage = ev["data"]
+                    j.emit(ev)
+            stats = {
+                "promptTokens": usage.get("prompt_tokens"),
+                "completionTokens": usage.get("completion_tokens"),
+                "totalTokens": usage.get("total_tokens"),
+            }
+            llm_activity.mark_done(call, stats=stats, model=model_name, raw_response="".join(full))
+            j.emit({"type": "llm_done", "stats": stats, "modelName": model_name})
+        except asyncio.CancelledError:
+            llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
+            raise
+        except Exception as e:
+            llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
+            raise
+
+        try:
+            parsed = json.loads("".join(full))
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+
+        now = datetime.now(timezone.utc).isoformat()
+        if parsed and parsed.get("characters"):
+            for update in parsed["characters"]:
+                await db.execute(
+                    "UPDATE characters SET current_state = ?, traits = ?, key_events = ?, last_updated = ? WHERE session_id = ? AND name = ?",
+                    (update.get("currentState", ""), json.dumps(update.get("traits", [])),
+                     json.dumps(update.get("keyEvents", [])), now, session_id, update["name"]),
+                )
+        if parsed and parsed.get("facts"):
+            await db.execute("DELETE FROM facts WHERE session_id = ?", (session_id,))
+            for fact in parsed["facts"]:
+                await db.execute("INSERT INTO facts (session_id, fact, created_at) VALUES (?,?,?)", (session_id, fact, now))
+        await db.commit()
+
+        updated_chars = await list_characters(session_id)
+        j.set_result({
+            "characters": updated_chars,
+            "facts": parsed.get("facts", facts) if parsed else facts,
+        })
+
+    job = await job_manager.run_and_wait(
         kind="consolidate",
+        label=f"Consolidate · {len(characters)} chars / {len(facts)} facts",
         session_id=session_id,
+        runner=_runner,
     )
-
-    try:
-        parsed = json.loads(result["raw"])
-    except (json.JSONDecodeError, TypeError):
-        parsed = None
-
-    now = datetime.now(timezone.utc).isoformat()
-    if parsed and parsed.get("characters"):
-        for update in parsed["characters"]:
-            await db.execute(
-                "UPDATE characters SET current_state = ?, traits = ?, key_events = ?, last_updated = ? WHERE session_id = ? AND name = ?",
-                (update.get("currentState", ""), json.dumps(update.get("traits", [])),
-                 json.dumps(update.get("keyEvents", [])), now, session_id, update["name"]),
-            )
-
-    if parsed and parsed.get("facts"):
-        await db.execute("DELETE FROM facts WHERE session_id = ?", (session_id,))
-        for fact in parsed["facts"]:
-            await db.execute("INSERT INTO facts (session_id, fact, created_at) VALUES (?,?,?)", (session_id, fact, now))
-
-    await db.commit()
-
-    updated_chars = await list_characters(session_id)
-    return {"characters": updated_chars, "facts": parsed.get("facts", facts) if parsed else facts}
+    if job.status == "cancelled":
+        raise HTTPException(499, "Consolidate cancelled")
+    if job.status == "error":
+        raise HTTPException(502, f"Consolidate failed: {job.error}")
+    return job.result
 
 
 @router.get("/meta-history")

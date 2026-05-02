@@ -1,6 +1,7 @@
 """Import character cards (Chub/TavernAI V2 format) and convert to PenDrift templates via LLM."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -8,7 +9,9 @@ from pathlib import Path
 
 import httpx
 
-from app.services.llm import generate_completion
+from app.services import llm_activity
+from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
+from app.services.job_manager import Job
 from app.services.prompts_registry import effective_prompt
 from app.utils.grammars import TEMPLATE_GRAMMAR
 
@@ -142,20 +145,66 @@ async def _llm_template_call(
     settings: dict,
     *,
     kind: str,
+    job: Job | None = None,
     temperature: float = 0.4,
     max_tokens: int = 4096,
 ) -> dict:
     """Shared LLM call for any chub_import-shaped operation (import, rerun,
-    enrich). Returns the parsed template body with `thinking` stripped."""
-    result = await generate_completion(
-        messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        grammar=TEMPLATE_GRAMMAR,
-        kind=kind,
-    )
+    enrich). Returns the parsed template body with `thinking` stripped.
 
-    raw = result["raw"]
+    If `job` is provided, llama-server's SSE events (first_token, delta,
+    model, usage) are forwarded to the job so the toast bar / Activity view
+    can show live token streaming. Without a job, this falls back to the
+    buffered `generate_completion` path (legacy callers, no UI streaming).
+    """
+    if job is None:
+        result = await generate_completion(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            grammar=TEMPLATE_GRAMMAR,
+            kind=kind,
+        )
+        raw = result["raw"]
+    else:
+        body = _build_body(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            grammar=TEMPLATE_GRAMMAR,
+        )
+        call = llm_activity.register(kind, None)
+        llm_activity.attach_task(call, asyncio.current_task())
+        full: list[str] = []
+        usage: dict = {}
+        model_name = ""
+        try:
+            async with _get_lock():
+                llm_activity.mark_running(call)
+                job.emit({"type": "llm_start", "kind": kind, "callId": call.id})
+                async for ev in llama_sse_completion(body, activity_call=call, kind=kind):
+                    if ev["type"] == "delta":
+                        full.append(ev["text"])
+                    elif ev["type"] == "model":
+                        model_name = ev["name"]
+                    elif ev["type"] == "usage":
+                        usage = ev["data"]
+                    job.emit(ev)
+            raw = "".join(full)
+            stats = {
+                "promptTokens": usage.get("prompt_tokens"),
+                "completionTokens": usage.get("completion_tokens"),
+                "totalTokens": usage.get("total_tokens"),
+            }
+            llm_activity.mark_done(call, stats=stats, model=model_name, raw_response=raw)
+            job.emit({"type": "llm_done", "stats": stats, "modelName": model_name})
+        except asyncio.CancelledError:
+            llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
+            raise
+        except Exception as e:
+            llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
+            raise
+
     try:
         template = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -173,20 +222,22 @@ async def convert_card_to_template(
     card: dict,
     settings: dict,
     *,
+    job: Job | None = None,
     temperature: float = 0.4,
     max_tokens: int = 4096,
 ) -> dict:
     """Convert a character card into a PenDrift template (fresh import).
 
     The conversion prompt is the bundled `chub_import` prompt unless the
-    preset overrides it via `chubImportPrompt`.
+    preset overrides it via `chubImportPrompt`. Pass a `job` to stream live
+    LLM events (token deltas, first_token, usage) into the toast bar.
     """
     messages = [
         {"role": "system", "content": effective_prompt("chub_import", settings)},
         {"role": "user", "content": _build_conversion_input(card)},
     ]
     template = await _llm_template_call(
-        messages, settings, kind="chub-import",
+        messages, settings, kind="chub-import", job=job,
         temperature=temperature, max_tokens=max_tokens,
     )
     template_id = re.sub(r"[^a-z0-9]+", "_", template.get("name", "imported").lower()).strip("_")
@@ -199,6 +250,7 @@ async def enrich_with_new_card(
     current_template: dict,
     settings: dict,
     *,
+    job: Job | None = None,
     temperature: float = 0.4,
     max_tokens: int = 4096,
 ) -> dict:
@@ -207,7 +259,8 @@ async def enrich_with_new_card(
     multiple chub cards (e.g. add Ethan and Lauren to a Tiffany template).
 
     The system prompt is the bundled `enrich` prompt; the user message
-    contains the new card and the current template body."""
+    contains the new card and the current template body. Pass a `job` to
+    stream live LLM events into the toast bar."""
     current_for_prompt = {k: v for k, v in current_template.items() if k != "coverImage"}
     user_msg = (
         f"# New Card (to merge into the template)\n\n{_build_conversion_input(new_card)}\n\n"
@@ -221,7 +274,7 @@ async def enrich_with_new_card(
         {"role": "user", "content": user_msg},
     ]
     template = await _llm_template_call(
-        messages, settings, kind="enrich",
+        messages, settings, kind="enrich", job=job,
         temperature=temperature, max_tokens=max_tokens,
     )
     template["id"] = current_template.get("id") or template.get("id")
@@ -233,6 +286,7 @@ async def rerun_with_current(
     current_template: dict,
     settings: dict,
     *,
+    job: Job | None = None,
     temperature: float = 0.4,
     max_tokens: int = 4096,
 ) -> dict:
@@ -240,7 +294,8 @@ async def rerun_with_current(
 
     The system prompt is the bundled `rerun` prompt; the user message
     includes both the original source card and the current template body
-    so the model can audit and improve."""
+    so the model can audit and improve. Pass a `job` to stream live LLM
+    events into the toast bar."""
     current_for_prompt = {k: v for k, v in current_template.items() if k != "coverImage"}
     user_msg = (
         f"# Original Card\n\n{_build_conversion_input(card)}\n\n"
@@ -254,7 +309,7 @@ async def rerun_with_current(
         {"role": "user", "content": user_msg},
     ]
     template = await _llm_template_call(
-        messages, settings, kind="rerun",
+        messages, settings, kind="rerun", job=job,
         temperature=temperature, max_tokens=max_tokens,
     )
     # Preserve the existing template id — rerun improves the same template

@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app.services import template_store
+from app.services import template_store, job_manager
 
 log = logging.getLogger("pendrift.templates")
 router = APIRouter()
@@ -275,27 +275,51 @@ def _load_settings(preset_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-async def _llm_and_save(template_id, source_filename, action, llm_fn, card, current, settings):
-    """The actual work: LLM call + save. Run as a shielded task so a client
-    disconnect on the SSE stream doesn't abort it — the new version is
-    always written to disk. Returns (saved_body, new_version)."""
-    new_body = await llm_fn(card, current, settings)
+async def _template_op_runner(
+    job, template_id: str, source_filename: str, action: str,
+    llm_fn, card: dict, current: dict, settings: dict,
+):
+    """Job runner shared by rerun + enrich. Ensures the model is loaded,
+    streams LLM events to the job, then saves the new version to disk."""
+    from app.services import llm_process
+    if not llm_process.is_running():
+        job.emit({"type": "model_loading", "modelPath": settings.get("modelPath")})
+        try:
+            await llm_process.ensure_loaded(settings)
+        except (RuntimeError, TimeoutError) as e:
+            raise RuntimeError(str(e))
+        job.emit({"type": "model_loaded"})
+
+    job.emit({"type": "started", "action": action})
+
+    new_body = await llm_fn(card, current, settings, job=job)
     if current.get("coverImage"):
         new_body["coverImage"] = current["coverImage"]
-    return template_store.add_version(
+    saved, new_version = template_store.add_version(
         template_id, new_body, action=action, source_ref=source_filename,
     )
+
+    job.set_result({
+        "template": saved,
+        "version": new_version,
+        "sourceFilename": source_filename,
+        "action": action,
+    })
+    job.emit({
+        "type": "done",
+        "template": saved,
+        "version": new_version,
+        "sourceFilename": source_filename,
+        "action": action,
+    })
 
 
 async def _stream_llm_op(template_id: str, source_filename: str, preset_id: str,
                          action: str, llm_fn):
-    """Common SSE generator for rerun and enrich. Emits:
-    - model_loading / model_loaded (if auto-load was needed)
-    - started
-    - processing {elapsed} every 2s while the LLM call runs
-    - done {template, version} on success
-    - error {message} on failure
-    """
+    """SSE generator for rerun + enrich. Creates a job and relays its event
+    stream so the existing client SSE contract (open / model_loading /
+    started / done / error events) keeps working — and so the same op also
+    shows up in /api/jobs and the Activity view."""
     yield ": stream open\n\n"
 
     card = template_store.load_source(template_id, source_filename)
@@ -312,56 +336,29 @@ async def _stream_llm_op(template_id: str, source_filename: str, preset_id: str,
         yield _sse({"type": "error", "message": f"Could not load preset '{preset_id}': {e}"})
         return
 
-    from app.services import llm_process
-    if not llm_process.is_running():
-        yield _sse({"type": "model_loading", "modelPath": settings.get("modelPath")})
-        try:
-            await llm_process.ensure_loaded(settings)
-        except RuntimeError as e:
-            yield _sse({"type": "error", "message": str(e)})
-            return
-        except TimeoutError as e:
-            yield _sse({"type": "error", "message": f"llama-server failed to start: {e}"})
-            return
-        yield _sse({"type": "model_loaded"})
-
-    yield _sse({"type": "started", "action": action})
-
-    task = asyncio.create_task(
-        _llm_and_save(template_id, source_filename, action, llm_fn, card, current, settings)
+    label = f"{action.capitalize()} · {template_id}"
+    job = job_manager.create_job(
+        kind=action,
+        label=label,
+        runner=lambda j: _template_op_runner(
+            j, template_id, source_filename, action, llm_fn, card, current, settings
+        ),
     )
-    elapsed = 0
-    while not task.done():
+
+    queue = job.subscribe()
+    while True:
         try:
-            # asyncio.shield ensures task survives if the SSE generator is
-            # cancelled (client disconnect). We just stop emitting heartbeats.
-            await asyncio.wait_for(asyncio.shield(task), timeout=2)
-        except asyncio.TimeoutError:
-            elapsed += 2
-            try:
-                yield _sse({"type": "processing", "elapsed": elapsed})
-            except (asyncio.CancelledError, ConnectionError):
-                # Client disconnected — task continues, we exit the generator
-                log.info("SSE %s for %s: client disconnected at %ds, task continues", action, template_id, elapsed)
-                return
+            ev = await queue.get()
         except asyncio.CancelledError:
-            log.info("SSE %s for %s: cancelled at %ds, task continues", action, template_id, elapsed)
+            log.info("SSE %s for %s: client disconnected, job continues", action, template_id)
+            raise
+        if ev is None:
+            # Job finalized. If it failed and never emitted an error event,
+            # surface the stored error so the client doesn't hang on `done`.
+            if job.status == "error" and not any(e.get("type") == "error" for e in job.events):
+                yield _sse({"type": "error", "message": f"LLM {action} failed: {job.error}"})
             return
-
-    try:
-        saved, new_version = await task
-    except Exception as e:
-        log.exception("LLM %s failed for %s", action, template_id)
-        yield _sse({"type": "error", "message": f"LLM {action} failed: {e}"})
-        return
-
-    yield _sse({
-        "type": "done",
-        "template": saved,
-        "version": new_version,
-        "sourceFilename": source_filename,
-        "action": action,
-    })
+        yield _sse(ev)
 
 
 @router.post("/{template_id}/rerun")

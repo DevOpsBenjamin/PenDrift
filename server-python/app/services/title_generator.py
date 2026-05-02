@@ -1,11 +1,14 @@
 """Generate evocative chapter titles from narrative excerpts."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
 from app.database import get_db
-from app.services.llm import generate_completion
+from app.services import llm_activity
+from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
+from app.services.job_manager import Job
 from app.utils.grammars import TITLE_GRAMMAR
 
 log = logging.getLogger("pendrift.title_gen")
@@ -21,7 +24,10 @@ def _get_narrative(chunk: dict) -> str:
     return chunk.get("narrative", "")
 
 
-async def generate_chapter_title(session_id: str, chunks: list[dict], settings: dict, chapter_order: int) -> str:
+async def generate_chapter_title(
+    session_id: str, chunks: list[dict], settings: dict, chapter_order: int,
+    *, job: Job | None = None,
+) -> str:
     fallback = f"Chapter {chapter_order + 1}"
     if not chunks:
         return fallback
@@ -65,16 +71,52 @@ async def generate_chapter_title(session_id: str, chunks: list[dict], settings: 
             meta_summary += "Key facts: " + "; ".join(r[0] for r in fact_rows)
         messages.append({"role": "user", "content": meta_summary + "\n\nBased on all of the above, suggest a chapter title."})
 
-        result = await generate_completion(
-            messages,
-            temperature=0.7,
-            max_tokens=400,
-            grammar=TITLE_GRAMMAR,
-            kind="title",
-            session_id=session_id,
-        )
+        if job is None:
+            result = await generate_completion(
+                messages,
+                temperature=0.7,
+                max_tokens=400,
+                grammar=TITLE_GRAMMAR,
+                kind="title",
+                session_id=session_id,
+            )
+            raw = result["raw"]
+        else:
+            # Stream LLM events into the job so the toast shows live progress.
+            body = _build_body(messages, temperature=0.7, max_tokens=400, grammar=TITLE_GRAMMAR)
+            call = llm_activity.register("title", session_id)
+            llm_activity.attach_task(call, asyncio.current_task())
+            full: list[str] = []
+            usage: dict = {}
+            model_name = ""
+            try:
+                async with _get_lock():
+                    llm_activity.mark_running(call)
+                    job.emit({"type": "llm_start", "kind": "title", "callId": call.id})
+                    async for ev in llama_sse_completion(body, activity_call=call, kind="title"):
+                        if ev["type"] == "delta":
+                            full.append(ev["text"])
+                        elif ev["type"] == "model":
+                            model_name = ev["name"]
+                        elif ev["type"] == "usage":
+                            usage = ev["data"]
+                        job.emit(ev)
+                stats = {
+                    "promptTokens": usage.get("prompt_tokens"),
+                    "completionTokens": usage.get("completion_tokens"),
+                    "totalTokens": usage.get("total_tokens"),
+                }
+                llm_activity.mark_done(call, stats=stats, model=model_name, raw_response="".join(full))
+                job.emit({"type": "llm_done", "stats": stats, "modelName": model_name})
+                raw = "".join(full)
+            except asyncio.CancelledError:
+                llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
+                raise
+            except Exception as e:
+                llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
+                raise
 
-        parsed = json.loads(result["raw"])
+        parsed = json.loads(raw)
         title = (parsed.get("title") or "").strip()
         if title and len(title) < 80:
             return title

@@ -1,12 +1,15 @@
 """Meta-analysis pipeline: analyze narrative, update characters, extract facts."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 
 from app.database import get_db
-from app.services.llm import generate_completion
+from app.services import llm_activity
+from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
+from app.services.job_manager import Job
 from app.services.prompts import build_meta_analysis_messages
 from app.services.prompts_registry import effective_prompt
 from app.utils.grammars import META_GRAMMAR
@@ -14,7 +17,10 @@ from app.utils.grammars import META_GRAMMAR
 log = logging.getLogger("pendrift.meta")
 
 
-async def run_meta_analysis(session_id: str, recent_chunks: list[dict], settings: dict) -> dict:
+async def run_meta_analysis(
+    session_id: str, recent_chunks: list[dict], settings: dict,
+    *, job: Job | None = None,
+) -> dict:
     db = await get_db()
 
     # Load characters
@@ -57,15 +63,54 @@ async def run_meta_analysis(session_id: str, recent_chunks: list[dict], settings
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        response = await generate_completion(
-            messages,
-            temperature=0.2,
-            max_tokens=(settings.get("maxTokens", 4096)) * 2,
-            grammar=META_GRAMMAR,
-            kind="meta",
-            session_id=session_id,
-        )
-        raw_response = response["raw"]
+        if job is None:
+            response = await generate_completion(
+                messages,
+                temperature=0.2,
+                max_tokens=(settings.get("maxTokens", 4096)) * 2,
+                grammar=META_GRAMMAR,
+                kind="meta",
+                session_id=session_id,
+            )
+            raw_response = response["raw"]
+        else:
+            body = _build_body(
+                messages,
+                temperature=0.2,
+                max_tokens=(settings.get("maxTokens", 4096)) * 2,
+                grammar=META_GRAMMAR,
+            )
+            call = llm_activity.register("meta", session_id)
+            llm_activity.attach_task(call, asyncio.current_task())
+            full: list[str] = []
+            usage: dict = {}
+            model_name = ""
+            try:
+                async with _get_lock():
+                    llm_activity.mark_running(call)
+                    job.emit({"type": "llm_start", "kind": "meta", "callId": call.id})
+                    async for ev in llama_sse_completion(body, activity_call=call, kind="meta"):
+                        if ev["type"] == "delta":
+                            full.append(ev["text"])
+                        elif ev["type"] == "model":
+                            model_name = ev["name"]
+                        elif ev["type"] == "usage":
+                            usage = ev["data"]
+                        job.emit(ev)
+                stats = {
+                    "promptTokens": usage.get("prompt_tokens"),
+                    "completionTokens": usage.get("completion_tokens"),
+                    "totalTokens": usage.get("total_tokens"),
+                }
+                llm_activity.mark_done(call, stats=stats, model=model_name, raw_response="".join(full))
+                job.emit({"type": "llm_done", "stats": stats, "modelName": model_name})
+                raw_response = "".join(full)
+            except asyncio.CancelledError:
+                llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
+                raise
+            except Exception as e:
+                llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
+                raise
         result = json.loads(raw_response)
     except Exception as e:
         log.error("Meta-analysis failed: %s", e)
