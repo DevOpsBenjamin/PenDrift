@@ -11,7 +11,7 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def get_facts(session_id: str):
     db = await get_db()
     rows = await db.execute_fetchall(
@@ -20,7 +20,7 @@ async def get_facts(session_id: str):
     return [r[0] for r in rows]
 
 
-@router.put("/")
+@router.put("")
 async def save_facts(session_id: str, body: dict):
     facts = body.get("facts", [])
     now = datetime.now(timezone.utc).isoformat()

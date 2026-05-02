@@ -5,12 +5,11 @@ import json
 
 from fastapi import APIRouter, HTTPException
 
-from app.services.chub_importer import fetch_chub_card, convert_card_to_template, _normalize_card
+from app.services.chub_importer import fetch_chub_card, convert_card_to_template, _normalize_card, download_card_avatar
+from app.services import template_store, llm_process
 from app.config import DATA_DIR
 
 router = APIRouter()
-
-TEMPLATES_PATH = DATA_DIR / "presets" / "templates"
 
 
 def _load_settings(preset_id: str = "default") -> dict:
@@ -22,17 +21,17 @@ def _load_settings(preset_id: str = "default") -> dict:
 
 @router.post("/chub")
 async def import_from_chub(body: dict):
-    """Import a character card from chub.ai URL or raw JSON and convert to PenDrift template.
+    """Import a character card from chub.ai URL or raw JSON and convert to a
+    PenDrift template. The result is ALWAYS saved as a new folder with
+    `0001.json` + `sources/0001-card.json` + avatar (if found).
 
     Body:
     - url: chub.ai character URL
     - card: raw V2 character card JSON (alternative to url)
-    - save: also save as template file (default: false, just preview)
     - settingsPresetId: which preset to read the import prompt from (default: "default")
     """
     url = body.get("url")
     raw_card = body.get("card")
-    save = body.get("save", False)
     preset_id = body.get("settingsPresetId", "default")
 
     if not url and not raw_card:
@@ -49,21 +48,49 @@ async def import_from_chub(body: dict):
     except Exception as e:
         raise HTTPException(400, f"Could not fetch/parse card: {e}")
 
+    # Step 1.5: Make sure llama-server is up (auto-load with this preset)
+    try:
+        await llm_process.ensure_loaded(settings)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    except (TimeoutError,) as e:
+        raise HTTPException(503, f"llama-server failed to start: {e}")
+
     # Step 2: Convert via LLM
     try:
         template = await convert_card_to_template(card, settings)
     except Exception as e:
         raise HTTPException(502, f"LLM conversion failed: {e}")
 
-    # Step 3: Optionally save
-    if save:
-        TEMPLATES_PATH.mkdir(parents=True, exist_ok=True)
-        path = TEMPLATES_PATH / f"{template['id']}.json"
-        path.write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
-        template["_saved"] = True
+    # Step 3: Save the folder + initial version + source
+    try:
+        template_store.create_new_template(
+            template["id"],
+            template,
+            action="import",
+            source_url=url if url else None,
+            source_json=card,
+        )
+    except ValueError as e:
+        # Template id already exists — caller can fix the id and retry, or
+        # delete the existing one first.
+        raise HTTPException(409, str(e))
+
+    # Step 4: Best-effort avatar download → write into the template folder
+    avatar = await download_card_avatar(card)
+    if avatar:
+        content, ext = avatar
+        try:
+            filename = template_store.write_image(template["id"], content, ext)
+            template["coverImage"] = filename
+            # Persist the coverImage update on the just-created version
+            template_store.save_in_place(template["id"], template)
+        except (ValueError, OSError):
+            pass
 
     return {
         "template": template,
+        "saved": True,
         "originalCard": {
             "name": card.get("name"),
             "tags": card.get("tags", []),

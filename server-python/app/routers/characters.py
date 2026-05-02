@@ -9,11 +9,12 @@ from fastapi import APIRouter, HTTPException
 from app.database import get_db
 from app.services.meta_analysis import run_meta_analysis
 from app.services.llm import generate_completion
+from app.utils.grammars import CONSOLIDATE_GRAMMAR
 
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_characters(session_id: str):
     db = await get_db()
     rows = await db.execute_fetchall(
@@ -27,7 +28,7 @@ async def list_characters(session_id: str):
     ]
 
 
-@router.post("/")
+@router.post("")
 async def add_character(session_id: str, body: dict):
     name = body.get("name")
     if not name:
@@ -150,31 +151,28 @@ FACTS rules:
 - Max 10 facts total. Merge aggressively.
 - Remove facts that are obvious from character sheets.
 
-Return ONLY valid JSON:
+Return JSON: put your reasoning in `thinking`, then the compressed data:
 {
+  "thinking": "brief reasoning",
   "characters": [{ "name": "", "currentState": "", "traits": [], "keyEvents": [] }],
   "facts": ["fact1", "fact2"]
 }"""},
-        {"role": "user", "content": f"## Characters\n{json.dumps(characters, indent=2)}\n\n## Facts\n{json.dumps(facts, indent=2)}\n\nConsolidate and compress. Return only the JSON."},
+        {"role": "user", "content": f"## Characters\n{json.dumps(characters, indent=2)}\n\n## Facts\n{json.dumps(facts, indent=2)}\n\nConsolidate and compress."},
     ]
 
     result = await generate_completion(
         consolidate_messages,
         temperature=0.2,
         max_tokens=(settings.get("maxTokens", 4096)) * 3,
+        grammar=CONSOLIDATE_GRAMMAR,
+        kind="consolidate",
+        session_id=session_id,
     )
 
-    parsed = None
     try:
-        parsed = json.loads(result["narrative"])
+        parsed = json.loads(result["raw"])
     except (json.JSONDecodeError, TypeError):
-        import re
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", result["narrative"]) or re.search(r"\{[\s\S]*\}", result["narrative"])
-        if m:
-            try:
-                parsed = json.loads(m.group(1) if m.lastindex else m.group(0))
-            except (json.JSONDecodeError, TypeError):
-                pass
+        parsed = None
 
     now = datetime.now(timezone.utc).isoformat()
     if parsed and parsed.get("characters"):

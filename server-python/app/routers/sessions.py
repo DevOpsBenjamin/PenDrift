@@ -1,7 +1,6 @@
 """Session CRUD routes."""
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -9,7 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 
 from app.database import get_db
-from app.config import TEMPLATES_DIR
+from app.services import template_store
 
 router = APIRouter()
 
@@ -20,11 +19,11 @@ def _resolve(text: str | None, variables: dict) -> str | None:
     return re.sub(r"\{\{(\w+)\}\}", lambda m: variables.get(m.group(1), m.group(0)), text)
 
 
-@router.get("/")
+@router.get("")
 async def list_sessions():
     db = await get_db()
     rows = await db.execute_fetchall(
-        "SELECT id, title, template_id, settings_preset_id, cover_image, created_at, updated_at, last_meta_after_chunk_index FROM sessions ORDER BY updated_at DESC"
+        "SELECT id, title, template_id, settings_preset_id, cover_image, created_at, updated_at, last_meta_after_chunk_index, template_version FROM sessions ORDER BY updated_at DESC"
     )
     sessions = []
     for r in rows:
@@ -35,26 +34,25 @@ async def list_sessions():
         sessions.append({
             "id": sid, "title": r[1], "templateId": r[2], "settingsPresetId": r[3],
             "coverImage": r[4], "createdAt": r[5], "updatedAt": r[6], "lastMetaAfterChunkIndex": r[7],
+            "templateVersion": r[8],
             "chapters": [{"id": c[0], "title": c[1], "order": c[2], "finalized": bool(c[3]), "createdAt": c[4]} for c in chapters],
         })
     return sessions
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 async def create_session(body: dict):
     template_id = body.get("templateId")
     if not template_id:
         raise HTTPException(400, "templateId is required")
 
-    template_path = TEMPLATES_DIR / f"{template_id}.json"
-    if not template_path.is_file():
-        # Check data dir
-        from app.config import DATA_DIR
-        template_path = DATA_DIR / "presets" / "templates" / f"{template_id}.json"
-        if not template_path.is_file():
-            raise HTTPException(404, f"Template '{template_id}' not found")
+    template = template_store.load_current(template_id)
+    if template is None:
+        raise HTTPException(404, f"Template '{template_id}' not found")
 
-    template = json.loads(template_path.read_text(encoding="utf-8"))
+    # Snapshot the template version at session creation so future template
+    # edits don't retroactively change this session's prompt.
+    snapshot_version = template_store.current_version(template_id)
     variables = template.get("variables", {})
 
     session_id = str(uuid4())
@@ -64,9 +62,9 @@ async def create_session(body: dict):
     db = await get_db()
 
     await db.execute(
-        "INSERT INTO sessions (id, title, template_id, settings_preset_id, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO sessions (id, title, template_id, template_version, settings_preset_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
         (session_id, body.get("title") or template.get("name", "Untitled"), template_id,
-         body.get("settingsPresetId", "default"), now, now),
+         snapshot_version, body.get("settingsPresetId", "default"), now, now),
     )
 
     await db.execute(
@@ -87,7 +85,8 @@ async def create_session(body: dict):
 
     return {
         "id": session_id, "title": body.get("title") or template.get("name", "Untitled"),
-        "templateId": template_id, "settingsPresetId": body.get("settingsPresetId", "default"),
+        "templateId": template_id, "templateVersion": snapshot_version,
+        "settingsPresetId": body.get("settingsPresetId", "default"),
         "chapters": [{"id": chapter_id, "title": "Chapter 1", "order": 0, "finalized": False, "createdAt": now}],
         "coverImage": None, "createdAt": now, "updatedAt": now,
     }
@@ -97,7 +96,7 @@ async def create_session(body: dict):
 async def get_session(session_id: str):
     db = await get_db()
     row = await db.execute_fetchall(
-        "SELECT id, title, template_id, settings_preset_id, cover_image, created_at, updated_at, last_meta_after_chunk_index FROM sessions WHERE id = ?",
+        "SELECT id, title, template_id, settings_preset_id, cover_image, created_at, updated_at, last_meta_after_chunk_index, template_version FROM sessions WHERE id = ?",
         (session_id,),
     )
     if not row:
@@ -109,6 +108,7 @@ async def get_session(session_id: str):
     return {
         "id": r[0], "title": r[1], "templateId": r[2], "settingsPresetId": r[3],
         "coverImage": r[4], "createdAt": r[5], "updatedAt": r[6], "lastMetaAfterChunkIndex": r[7],
+        "templateVersion": r[8],
         "chapters": [{"id": c[0], "title": c[1], "order": c[2], "finalized": bool(c[3]), "createdAt": c[4]} for c in chapters],
     }
 
@@ -138,3 +138,30 @@ async def delete_session(session_id: str):
     await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     await db.commit()
     return {"ok": True}
+
+
+@router.put("/{session_id}/template-version")
+async def set_template_version(session_id: str, body: dict):
+    """Pin this session to a specific template version. Pass {"version": null}
+    to unpin (sessions without a pinned version always use the template's
+    currentVersion)."""
+    version = body.get("version")
+    db = await get_db()
+    row = await db.execute_fetchall(
+        "SELECT template_id FROM sessions WHERE id = ?", (session_id,)
+    )
+    if not row:
+        raise HTTPException(404, "Session not found")
+    template_id = row[0][0]
+
+    if version is not None:
+        if template_store.load_version(template_id, version) is None:
+            raise HTTPException(404, f"Version '{version}' not found for template '{template_id}'")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        "UPDATE sessions SET template_version = ?, updated_at = ? WHERE id = ?",
+        (version, now, session_id),
+    )
+    await db.commit()
+    return await get_session(session_id)

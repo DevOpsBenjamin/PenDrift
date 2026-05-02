@@ -12,9 +12,19 @@ export const useNarrativeStore = defineStore('narrative', {
     characters: [],
     consistencyFlags: [],
     generating: false,
-    activeJobs: {},  // { sessionId: jobId }
+    activeJobs: {},  // { sessionId: jobId } — legacy job-based fallback
     metaUpdatePending: false,
     error: null,
+    // Streaming state (SSE-backed) — only one stream per session at a time
+    streamPhase: 'idle',  // 'idle' | 'preparing' | 'meta_running' | 'loading_model' | 'thinking' | 'narrative' | 'done' | 'error'
+    liveThinking: '',
+    liveNarrative: '',
+    liveSuggestions: [],
+    modelLoadingPath: '',
+    metaSummary: null,    // {charactersUpdated, newCharacters, factsCount, consistencyFlags} after meta_done
+    metaHistory: [],      // meta-analysis runs for the current session, shown as dividers between chunks
+    streamAbort: null,    // AbortController for cancellation
+    pendingDirective: '', // text the user wants prefilled into DirectiveInput (e.g. clicked suggestion)
   }),
 
   getters: {
@@ -69,22 +79,208 @@ export const useNarrativeStore = defineStore('narrative', {
       }
     },
 
+    async loadMetaHistory(sessionId) {
+      try {
+        this.metaHistory = await charactersApi.getMetaHistory(sessionId);
+      } catch { /* not critical */ }
+    },
+
     async generate(sessionId, directive, isKeyMoment = false) {
       if (!this.currentChapterId) return;
       this.generating = true;
       this.error = null;
+      this.streamPhase = 'thinking';
+      this.liveThinking = '';
+      this.liveNarrative = '';
+      this.liveSuggestions = [];
+      this.metaSummary = null;
+
+      const controller = new AbortController();
+      this.streamAbort = controller;
+
+      // Streaming may start with prep (settings, meta) before any model token.
+      // Set initial phase to 'preparing' so the UI doesn't pretend we're already
+      // in the model's thinking phase while the backend is doing meta-analysis.
+      this.streamPhase = 'preparing';
+
       try {
-        // Start job — returns immediately
-        const { jobId } = await generateApi.startGeneration(sessionId, {
-          chapterId: this.currentChapterId,
-          directive,
-          isKeyMoment,
-        });
-        this.activeJobs[sessionId] = jobId;
-        this.pollJob(sessionId, jobId);
+        await generateApi.streamGeneration(
+          sessionId,
+          { chapterId: this.currentChapterId, directive, isKeyMoment },
+          (ev) => this._handleStreamEvent(sessionId, ev),
+          controller.signal,
+        );
       } catch (err) {
-        this.error = err.message;
+        if (err.name !== 'AbortError') {
+          this.error = err.message || 'Stream failed';
+          this.streamPhase = 'error';
+        }
+      } finally {
         this.generating = false;
+        this.streamAbort = null;
+      }
+    },
+
+    prefillDirective(text) {
+      // Push text into the DirectiveInput. Cleared once consumed.
+      this.pendingDirective = text || '';
+    },
+
+    /** The director clicked a suggestion the model emitted on the last chunk.
+     * Auto-submits a framed directive that tells the model the director is
+     * choosing a path, not writing one — keep narrating in the same voice and
+     * keep proposing options for the next pause point. */
+    async chooseSuggestion(suggestion) {
+      if (!this.currentSessionId || !this.currentChapterId) return;
+      const text = (suggestion || '').trim();
+      if (!text) return;
+      const framed = (
+        `[Director chose your suggestion: "${text}"]\n\n` +
+        `Continue the narrative in this direction. Match the tone, pacing, POV, and voice ` +
+        `of the previous chunk — the director is HAPPY to be guided and prefers reading ` +
+        `over writing. Keep agency with the characters: do NOT prompt the director with a ` +
+        `question, do NOT ask "what does X do?", just keep narrating as if you were a novelist ` +
+        `and the director is your reader. Always include 2-4 fresh suggestions at the next ` +
+        `natural pause so they can keep choosing.`
+      );
+      await this.generate(this.currentSessionId, framed, false);
+    },
+
+    cancelStream() {
+      if (this.streamAbort) {
+        this.streamAbort.abort();
+        this.streamAbort = null;
+      }
+    },
+
+    /**
+     * On session/page load, check if a generation is already in flight for
+     * this session and re-attach the live UI to it (replay buffered events +
+     * receive live updates).
+     */
+    async tryAttachStream(sessionId) {
+      try {
+        const status = await generateApi.getActiveStreamStatus(sessionId);
+        if (!status.running || status.done) return;
+      } catch {
+        return;
+      }
+
+      // Open the attach SSE — replays past events, then live ones.
+      this.generating = true;
+      this.error = null;
+      this.streamPhase = 'thinking';  // will be corrected by replayed events
+      this.liveThinking = '';
+      this.liveNarrative = '';
+      this.liveSuggestions = [];
+
+      const controller = new AbortController();
+      this.streamAbort = controller;
+      try {
+        await generateApi.attachGenerationStream(
+          sessionId,
+          (ev) => this._handleStreamEvent(sessionId, ev),
+          controller.signal,
+        );
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          // 404 (gen finished between status check and attach) or transport error
+          this.streamPhase = 'idle';
+        }
+      } finally {
+        this.generating = false;
+        this.streamAbort = null;
+      }
+    },
+
+    _handleStreamEvent(sessionId, ev) {
+      switch (ev.type) {
+        case 'meta_starting':
+          this.streamPhase = 'meta_running';
+          this.metaSummary = null;
+          this.metaUpdatePending = true;
+          break;
+        case 'meta_done':
+          this.metaSummary = ev.error ? null : {
+            charactersUpdated: ev.charactersUpdated || 0,
+            newCharacters: ev.newCharacters || 0,
+            factsCount: ev.factsCount || 0,
+            consistencyFlags: ev.consistencyFlags || 0,
+          };
+          this.metaUpdatePending = false;
+          this.streamPhase = 'preparing';
+          // Reload characters and meta history now that they may have changed
+          this.loadCharacters(sessionId);
+          this.loadMetaHistory(sessionId);
+          break;
+        case 'prep_done':
+          // After prep, we're about to call the model. If we don't get a model_loading
+          // event next, the streaming will start soon — switch back to a thinking-ish
+          // pre-state to let the spinner take over.
+          if (this.streamPhase !== 'loading_model') {
+            this.streamPhase = 'thinking';
+          }
+          break;
+        case 'model_loading':
+          this.streamPhase = 'loading_model';
+          this.modelLoadingPath = ev.modelPath || '';
+          break;
+        case 'model_loaded':
+          this.modelLoadingPath = '';
+          this.streamPhase = 'thinking';
+          break;
+        case 'started':
+          // stream_narrative entered running state
+          break;
+        case 'thinking_start':
+          this.streamPhase = 'thinking';
+          this.liveThinking = '';
+          break;
+        case 'thinking_chunk':
+          this.liveThinking += ev.text || '';
+          break;
+        case 'thinking_done':
+          // Keep liveThinking in state — UI may move it to brain panel
+          break;
+        case 'type_resolved':
+          // 'narrative' or 'suggestion'
+          break;
+        case 'narrative_start':
+          this.streamPhase = 'narrative';
+          this.liveNarrative = '';
+          break;
+        case 'narrative_chunk':
+          this.liveNarrative += ev.text || '';
+          break;
+        case 'narrative_done':
+          break;
+        case 'suggestions':
+          this.liveSuggestions = ev.items || [];
+          break;
+        case 'done':
+          if (ev.kind === 'narrative' && ev.chunk && this.currentSessionId === sessionId) {
+            const existing = this.chunks.find(c => c.id === ev.chunk.id);
+            if (existing) {
+              existing.versions = ev.chunk.versions;
+              existing.activeVersion = ev.chunk.activeVersion;
+            } else {
+              this.chunks.push(ev.chunk);
+            }
+          }
+          if (ev.metaUpdatePending) {
+            this.metaUpdatePending = true;
+            this.pollMetaStatus(sessionId);
+          }
+          // Hand off live → finalized chunk in one tick to avoid visual stutter
+          this.streamPhase = 'idle';
+          this.liveThinking = '';
+          this.liveNarrative = '';
+          this.liveSuggestions = [];
+          break;
+        case 'error':
+          this.streamPhase = 'error';
+          this.error = ev.message || 'Generation error';
+          break;
       }
     },
 
@@ -92,17 +288,30 @@ export const useNarrativeStore = defineStore('narrative', {
       if (!this.currentChapterId) return;
       this.generating = true;
       this.error = null;
+      this.streamPhase = 'thinking';
+      this.liveThinking = '';
+      this.liveNarrative = '';
+      this.liveSuggestions = [];
+      this.metaSummary = null;
+
+      const controller = new AbortController();
+      this.streamAbort = controller;
+
       try {
-        const { jobId } = await generateApi.startRegeneration(sessionId, {
-          chunkId,
-          chapterId: this.currentChapterId,
-          directive,
-        });
-        this.activeJobs[sessionId] = jobId;
-        this.pollJob(sessionId, jobId);
+        await generateApi.streamRegeneration(
+          sessionId,
+          { chunkId, directive },
+          (ev) => this._handleStreamEvent(sessionId, ev),
+          controller.signal,
+        );
       } catch (err) {
-        this.error = err.message;
+        if (err.name !== 'AbortError') {
+          this.error = err.message || 'Regenerate stream failed';
+          this.streamPhase = 'error';
+        }
+      } finally {
         this.generating = false;
+        this.streamAbort = null;
       }
     },
 

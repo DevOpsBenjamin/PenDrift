@@ -20,3 +20,20 @@ export const downloadLlamaServer = (variant = 'cuda13') =>
     json: { variant },
     timeout: 300000, // downloads can take a while
   }).json();
+
+export const browsePath = (path) =>
+  api.get('llm/browse', { searchParams: path ? { path } : {} }).json();
+
+export const getActivity = () => api.get('llm/activity').json();
+
+export const getLogs = (lines = 200) =>
+  api.get('llm/logs', { searchParams: { lines } }).json();
+
+export const getResponseDump = (filename) =>
+  api.get(`llm/response/${encodeURIComponent(filename)}`).json();
+
+export const getRequestDump = (filename) =>
+  api.get(`llm/request/${encodeURIComponent(filename)}`).json();
+
+export const cancelCall = (id) =>
+  api.post(`llm/cancel/${encodeURIComponent(id)}`).json();

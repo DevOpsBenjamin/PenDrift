@@ -39,12 +39,19 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 const props = defineProps({ facts: Array });
 const emit = defineEmits(['close', 'save']);
 
 const factsText = ref((props.facts || []).join('\n'));
+
+// Keep the textarea in sync if the parent loads facts AFTER mount.
+// Without this, the modal opened with stale empty data and never updated
+// even when the parent's facts ref got populated by an async fetch.
+watch(() => props.facts, (newFacts) => {
+  factsText.value = (newFacts || []).join('\n');
+}, { immediate: false });
 
 function save() {
   const facts = factsText.value.split('\n').map(s => s.trim()).filter(Boolean);

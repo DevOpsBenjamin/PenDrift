@@ -1,11 +1,10 @@
 <template>
   <div class="flex-1 max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 w-full">
 
-    <!-- LLM Engine Panel -->
+    <!-- LLM Engine Panel (slim: version + exe + status) -->
     <div class="mb-8 p-5 bg-bg-surface rounded-xl border border-border">
       <h2 class="font-body text-lg font-bold mb-4">LLM Engine</h2>
 
-      <!-- llama-server version / download -->
       <div class="flex items-center gap-3 mb-4 p-3 bg-bg-primary rounded-lg border border-border-subtle">
         <div class="flex-1">
           <div class="text-sm text-text-primary font-medium">llama-server</div>
@@ -31,8 +30,7 @@
         >{{ llmDownloading ? 'Downloading...' : (llmVersionInfo.installed ? 'Update' : 'Download') }}</button>
       </div>
 
-      <!-- Manual exe path override -->
-      <details class="mb-4">
+      <details class="mb-3">
         <summary class="text-xs text-text-muted cursor-pointer hover:text-text-secondary">Manual exe path (optional)</summary>
         <div class="flex gap-2 mt-2">
           <input v-model="llmExePath" placeholder="C:\llama.cpp\llama-server.exe"
@@ -47,58 +45,21 @@
         </div>
       </details>
 
-      <!-- Model loading -->
-      <div class="flex flex-col gap-1.5 mb-4">
-        <label class="text-xs text-text-muted font-medium uppercase tracking-wider">GGUF Model Path</label>
-        <input v-model="llmModelPath" placeholder="I:\models\qwen3.5-27b-q3.gguf"
-          class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
-                 focus:outline-none focus:border-accent transition-colors" />
-      </div>
-
-      <div class="grid grid-cols-3 sm:grid-cols-4 gap-3 mb-4">
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted">GPU Layers</label>
-          <input v-model.number="llmGpuLayers" type="number" min="0" max="999"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   focus:outline-none focus:border-accent transition-colors" />
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted">Context Size</label>
-          <input v-model.number="llmContextSize" type="number" step="1024" min="1024"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   focus:outline-none focus:border-accent transition-colors" />
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted">Port</label>
-          <input v-model.number="llmPort" type="number" min="1024" max="65535"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   focus:outline-none focus:border-accent transition-colors" />
-        </div>
-      </div>
-
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2 text-sm">
+        <span class="w-2.5 h-2.5 rounded-full" :class="llmStatus.running ? 'bg-green-400' : 'bg-text-muted/30'"></span>
+        <span class="text-text-secondary">
+          <template v-if="llmStatus.running">
+            Loaded — <span class="font-mono text-xs">{{ shortModelName(llmStatus.modelPath) }}</span> on port {{ llmStatus.port }}
+          </template>
+          <template v-else>No model loaded</template>
+        </span>
         <button
-          class="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-all cursor-pointer active:scale-95"
-          :class="llmStatus.running
-            ? 'bg-error hover:bg-error/80'
-            : 'bg-accent hover:bg-accent-hover'"
-          :disabled="llmLoading || (!llmVersionInfo.installed && !llmExePath)"
-          @click="llmStatus.running ? doUnload() : doLoad()"
-        >
-          <span v-if="llmLoading">{{ llmLoadingText }}</span>
-          <span v-else-if="llmStatus.running">Unload Model</span>
-          <span v-else>Load Model</span>
-        </button>
-        <div class="flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full" :class="llmStatus.running ? 'bg-green-400' : 'bg-text-muted/30'"></span>
-          <span class="text-sm text-text-secondary">
-            <template v-if="llmStatus.running">
-              Loaded — port {{ llmStatus.port }}
-            </template>
-            <template v-else>No model loaded</template>
-          </span>
-        </div>
-        <span v-if="llmError" class="text-sm text-error">{{ llmError }}</span>
+          v-if="llmStatus.running"
+          class="ml-auto px-3 py-1 border border-border rounded text-xs text-text-secondary
+                 hover:border-error/40 hover:text-error transition-all cursor-pointer"
+          :disabled="llmLoading"
+          @click="doUnload"
+        >Unload</button>
       </div>
     </div>
 
@@ -125,7 +86,10 @@
             : 'text-text-secondary hover:bg-bg-surface/50'"
           @click="edit(preset)"
         >
-          <span class="truncate">{{ preset.name }}</span>
+          <span class="truncate flex items-center gap-1.5">
+            <span v-if="preset.isDefault" class="text-accent" title="Default preset (used by Import, Rerun, Enrich)">★</span>
+            {{ preset.name }}
+          </span>
           <button
             class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-accent transition-all shrink-0"
             @click.stop="duplicate(preset)"
@@ -155,58 +119,68 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Provider</label>
-            <select v-model="editing.provider"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     focus:outline-none focus:border-accent transition-colors">
-              <option value="ollama">Ollama</option>
-              <option value="lmstudio">LM Studio</option>
-              <option value="koboldcpp">KoboldCpp</option>
-              <option value="generic">Generic (OpenAI-compatible)</option>
-            </select>
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">API Endpoint</label>
-            <input v-model="editing.apiEndpoint" :placeholder="endpointPlaceholder"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors" />
-          </div>
-        </div>
-
-        <div class="flex items-end gap-3">
-          <button
-            class="px-4 py-2 text-xs bg-bg-surface border border-border rounded-lg text-text-secondary
-                   hover:text-text-primary hover:border-accent/40 transition-all cursor-pointer whitespace-nowrap"
-            :class="{ 'opacity-50 cursor-wait': loadingModels }"
-            :disabled="loadingModels"
-            @click="refreshModels"
-          >{{ loadingModels ? 'Loading...' : 'Refresh Models' }}</button>
-          <span v-if="availableModels.length" class="text-xs text-text-muted">
-            {{ availableModels.length }} model(s) found
-          </span>
-          <span v-else-if="!loadingModels" class="text-xs text-text-muted">
-            No models found — check endpoint and provider
-          </span>
-        </div>
-
+        <!-- Model Loading -->
+        <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Model Loading</h3>
         <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Narrative Model</label>
-          <ModelSelect v-model="editing.narrativeModel" :models="availableModels" placeholder="Select narrative model..." />
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">GGUF Model Path</label>
+          <div class="flex gap-2">
+            <input v-model="editing.modelPath" placeholder="I:\models\qwen3.5-27b-q3.gguf"
+              class="flex-1 px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
+                     focus:outline-none focus:border-accent transition-colors" />
+            <button
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-secondary text-sm
+                     hover:border-accent/40 hover:text-text-primary transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+              @click="showBrowser = true"
+              title="Browse for a .gguf file"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+              </svg>
+              Browse
+            </button>
+          </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="grid grid-cols-3 gap-3">
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Meta-Analysis Model</label>
-            <ModelSelect v-model="editing.metaModel" :models="availableModels" placeholder="Same as narrative if empty" />
+            <label class="text-xs text-text-muted">GPU Layers</label>
+            <input v-model.number="editing.gpuLayers" type="number" min="0" max="999"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Utility Model (JSON fixer)</label>
-            <ModelSelect v-model="editing.utilityModel" :models="availableModels" placeholder="Same as narrative if empty" />
+            <label class="text-xs text-text-muted">Context Size</label>
+            <input v-model.number="editing.contextSize" type="number" step="1024" min="1024"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted">Port</label>
+            <input v-model.number="editing.port" type="number" min="1024" max="65535"
+              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
+                     focus:outline-none focus:border-accent transition-colors" />
           </div>
         </div>
 
+        <div class="flex items-center gap-3">
+          <button
+            class="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-all cursor-pointer active:scale-95"
+            :class="isActivePreset && llmStatus.running
+              ? 'bg-error hover:bg-error/80'
+              : 'bg-accent hover:bg-accent-hover'"
+            :disabled="llmLoading || (!llmVersionInfo.installed && !llmExePath) || !editing.modelPath"
+            @click="isActivePreset && llmStatus.running ? doUnload() : doLoad()"
+          >
+            <span v-if="llmLoading">{{ llmLoadingText }}</span>
+            <span v-else-if="isActivePreset && llmStatus.running">Unload Model</span>
+            <span v-else>Load Model</span>
+          </button>
+          <span v-if="isActivePreset && llmStatus.running" class="text-xs text-green-400">● This preset is active</span>
+          <span v-else-if="llmStatus.running" class="text-xs text-text-muted">Another model is loaded</span>
+          <span v-if="llmError" class="text-sm text-error">{{ llmError }}</span>
+        </div>
+
+        <!-- Samplers -->
         <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Samplers</h3>
         <div class="grid grid-cols-3 sm:grid-cols-4 gap-3">
           <div class="flex flex-col gap-1.5">
@@ -259,8 +233,9 @@
           </div>
         </div>
 
+        <!-- Token Budget -->
         <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Token Budget</h3>
-        <div class="grid grid-cols-3 sm:grid-cols-5 gap-3">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="flex flex-col gap-1.5">
             <label class="text-xs text-text-muted">Thinking</label>
             <input v-model.number="editing.thinkingTokens" type="number" step="100" min="0"
@@ -285,18 +260,12 @@
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted">Context Size</label>
-            <input v-model.number="editing.contextSize" type="number" step="1024" min="1024"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                     focus:outline-none focus:border-accent transition-colors" />
-          </div>
         </div>
         <p class="text-xs text-text-muted -mt-2">
           Total generation budget: {{ (editing.thinkingTokens || 0) + (editing.narrativeTokens || 0) + (editing.suggestionTokens || 0) }} tokens
         </p>
 
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 gap-3">
           <div class="flex flex-col gap-1.5">
             <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Update Interval</label>
             <input v-model.number="editing.chunkUpdateInterval" type="number" min="1"
@@ -309,50 +278,60 @@
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Think Start</label>
-            <input v-model="editing.thinkBlockStart"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
-                     focus:outline-none focus:border-accent transition-colors" />
+        </div>
+
+        <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Prompts</h3>
+        <p class="text-xs text-text-muted -mt-2">
+          System prompts ship with the app and update automatically. Tick "Override" on a prompt to customize it for this preset only.
+        </p>
+        <div v-for="p in promptsList" :key="p.name" class="flex flex-col gap-1.5">
+          <div class="flex items-center justify-between gap-3">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">{{ promptLabel(p.name) }}</label>
+            <label class="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none">
+              <input
+                type="checkbox"
+                :checked="isOverridden(p.name)"
+                @change="toggleOverride(p.name, $event.target.checked)"
+                class="accent-accent cursor-pointer"
+              />
+              <span :class="isOverridden(p.name) ? 'text-accent' : ''">Override</span>
+            </label>
           </div>
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Think End</label>
-            <input v-model="editing.thinkBlockEnd"
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
-                     focus:outline-none focus:border-accent transition-colors" />
-          </div>
-        </div>
-
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Narrative Prompt</label>
-          <textarea v-model="editing.narrativePrompt" rows="6"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   font-ui resize-y min-h-32 focus:outline-none focus:border-accent transition-colors"></textarea>
-        </div>
-
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Meta-Analysis Prompt</label>
-          <textarea v-model="editing.metaPrompt" rows="6"
-            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
-                   font-ui resize-y min-h-32 focus:outline-none focus:border-accent transition-colors"></textarea>
-        </div>
-
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Chub/Card Import Prompt</label>
-          <textarea v-model="editing.chubImportPrompt" rows="6"
+          <textarea
+            v-if="isOverridden(p.name)"
+            v-model="editing[overrideKey(p.name)]"
+            rows="20"
             class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                    font-ui resize-y min-h-32 focus:outline-none focus:border-accent transition-colors"
-            placeholder="System prompt for converting character cards to PenDrift templates..."></textarea>
+          ></textarea>
+          <textarea
+            v-else
+            :value="systemPrompts[p.name] || ''"
+            rows="20"
+            readonly
+            class="px-3 py-2 bg-bg-primary/50 border border-border-subtle rounded-lg text-text-muted text-sm
+                   font-ui resize-y min-h-32 cursor-not-allowed"
+            title="System default. Tick 'Override' to customize for this preset."
+          ></textarea>
         </div>
 
         <div class="flex justify-between pt-2">
-          <button
-            v-if="!isNew && editing.id !== 'default'"
-            class="px-4 py-2 border border-error/30 rounded-lg text-error text-sm
-                   hover:bg-error/10 transition-all cursor-pointer"
-            @click="remove(editing.id)"
-          >Delete</button>
-          <span v-else></span>
+          <div class="flex gap-2">
+            <button
+              v-if="!isNew && editing.id !== 'default'"
+              class="px-4 py-2 border border-error/30 rounded-lg text-error text-sm
+                     hover:bg-error/10 transition-all cursor-pointer"
+              @click="remove(editing.id)"
+            >Delete</button>
+            <button
+              v-if="!isNew && !editing.isDefault"
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
+              @click="setAsDefault"
+              title="Mark this preset as the default for Import, Rerun, Enrich"
+            >★ Set as default</button>
+            <span v-if="!isNew && editing.isDefault" class="self-center text-xs text-accent">★ Default preset</span>
+          </div>
           <div class="flex gap-3">
             <button
               class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
@@ -372,28 +351,66 @@
         Select a preset to edit or create a new one.
       </div>
     </div>
+
+    <FileBrowserModal
+      v-if="showBrowser"
+      :initial-path="editing?.modelPath"
+      @close="showBrowser = false"
+      @select="onFileSelected"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useSettingsStore } from '../stores/settings.js';
-import * as presetsApi from '../api/presets.js';
 import * as llmApi from '../api/llm.js';
-import ModelSelect from '../components/presets/ModelSelect.vue';
+import * as promptsApi from '../api/prompts.js';
+import FileBrowserModal from '../components/settings/FileBrowserModal.vue';
 
 const store = useSettingsStore();
 const editing = ref(null);
 const isNew = ref(false);
-const availableModels = ref([]);
-const loadingModels = ref(false);
+const showBrowser = ref(false);
+
+// System prompts (bundled with app) — fetched once at mount
+const promptsList = ref([]);
+const systemPrompts = ref({});
+
+function overrideKey(name) {
+  // narrative → narrativePrompt, chub_import → chubImportPrompt
+  const camel = name.split('_').map((p, i) => i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)).join('');
+  return `${camel}Prompt`;
+}
+
+function promptLabel(name) {
+  const map = {
+    narrative: 'Narrative Prompt',
+    meta: 'Meta-Analysis Prompt',
+    chub_import: 'Chub / Card Import Prompt',
+  };
+  return map[name] || name;
+}
+
+function isOverridden(name) {
+  if (!editing.value) return false;
+  const v = editing.value[overrideKey(name)];
+  return typeof v === 'string';
+}
+
+function toggleOverride(name, on) {
+  if (!editing.value) return;
+  const key = overrideKey(name);
+  if (on) {
+    // Seed the override with the current system prompt so the user can edit from there
+    editing.value[key] = systemPrompts.value[name] || '';
+  } else {
+    editing.value[key] = null;
+  }
+}
 
 // LLM Engine state
 const llmExePath = ref('');
-const llmModelPath = ref('');
-const llmGpuLayers = ref(99);
-const llmContextSize = ref(65536);
-const llmPort = ref(8080);
 const llmStatus = ref({ running: false, modelPath: null, port: null });
 const llmLoading = ref(false);
 const llmLoadingText = ref('');
@@ -403,25 +420,38 @@ const llmVersionInfo = ref({ installed: null, latest: null, updateAvailable: fal
 const llmVariant = ref('cuda13');
 const llmDownloading = ref(false);
 
-const endpointPlaceholder = computed(() => {
-  const p = editing.value?.provider;
-  if (p === 'ollama') return 'http://localhost:11434/v1/chat/completions';
-  if (p === 'lmstudio') return 'http://localhost:1234/v1/chat/completions';
-  if (p === 'koboldcpp') return 'http://localhost:5001/v1/chat/completions';
-  return 'http://localhost:8080/v1/chat/completions';
-});
+const isActivePreset = computed(() =>
+  llmStatus.value.running
+  && editing.value?.modelPath
+  && llmStatus.value.modelPath === editing.value.modelPath,
+);
+
+function shortModelName(path) {
+  if (!path) return '';
+  return path.split(/[\\/]/).pop();
+}
+
+function onFileSelected(path) {
+  if (editing.value) editing.value.modelPath = path;
+  showBrowser.value = false;
+}
 
 onMounted(async () => {
   store.fetchPresets();
   try {
     const status = await llmApi.getLlmStatus();
     llmStatus.value = status;
-    if (status.modelPath) llmModelPath.value = status.modelPath;
     if (status.exePath) llmExePath.value = status.exePath;
   } catch { /* backend not running yet */ }
   try {
     llmVersionInfo.value = await llmApi.getVersion();
   } catch { /* ok */ }
+  try {
+    promptsList.value = await promptsApi.listPrompts();
+    // Fetch full bodies in parallel so the read-only textareas show real content
+    const bodies = await Promise.all(promptsList.value.map(p => promptsApi.getPrompt(p.name)));
+    for (const b of bodies) systemPrompts.value[b.name] = b.body;
+  } catch { /* prompts API not yet available */ }
 });
 
 async function saveLlmExe() {
@@ -429,7 +459,7 @@ async function saveLlmExe() {
   llmError.value = '';
   try {
     await llmApi.configureExe(llmExePath.value);
-  } catch (err) {
+  } catch {
     llmError.value = 'Invalid executable path';
   } finally {
     llmConfiguring.value = false;
@@ -437,16 +467,16 @@ async function saveLlmExe() {
 }
 
 async function doLoad() {
-  if (!llmModelPath.value) { llmError.value = 'Select a GGUF model first'; return; }
+  if (!editing.value?.modelPath) { llmError.value = 'Select a GGUF model first'; return; }
   llmLoading.value = true;
   llmLoadingText.value = 'Loading model...';
   llmError.value = '';
   try {
     const result = await llmApi.loadModel({
-      modelPath: llmModelPath.value,
-      gpuLayers: llmGpuLayers.value,
-      contextSize: llmContextSize.value,
-      port: llmPort.value,
+      modelPath: editing.value.modelPath,
+      gpuLayers: editing.value.gpuLayers ?? 99,
+      contextSize: editing.value.contextSize ?? 65536,
+      port: editing.value.port ?? 8080,
     });
     llmStatus.value = { running: result.running, modelPath: result.modelPath, port: result.port };
   } catch (err) {
@@ -484,75 +514,52 @@ async function doUnload() {
   }
 }
 
-async function refreshModels() {
-  if (!editing.value?.apiEndpoint) return;
-  loadingModels.value = true;
-  try {
-    availableModels.value = await presetsApi.listModels(
-      editing.value.apiEndpoint,
-      editing.value.provider || 'generic',
-    );
-  } catch {
-    availableModels.value = [];
-  } finally {
-    loadingModels.value = false;
-  }
-}
-
 function edit(preset) {
-  editing.value = JSON.parse(JSON.stringify(preset));
+  editing.value = withDefaults(JSON.parse(JSON.stringify(preset)));
   isNew.value = false;
-  availableModels.value = [];
 }
 
 function duplicate(preset) {
-  const copy = JSON.parse(JSON.stringify(preset));
+  const copy = withDefaults(JSON.parse(JSON.stringify(preset)));
   copy.id = copy.id + '_copy';
   copy.name = copy.name + ' (copy)';
   editing.value = copy;
   isNew.value = true;
-  availableModels.value = [];
 }
 
 function startNew() {
+  // Clone the "default" preset so samplers, token budget, and prompts are pre-filled.
+  const base = store.presets.find(p => p.id === 'default');
+  const template = base
+    ? JSON.parse(JSON.stringify(base))
+    : {
+        temperature: 0.7, topP: 0.8, topK: 20, minP: null,
+        presencePenalty: 1.5, frequencyPenalty: null, repeatPenalty: null, seed: null,
+        maxTokens: 10240, contextSize: 65536,
+        thinkingTokens: 1500, narrativeTokens: 500, suggestionTokens: 200,
+        recentChunksCount: 20, chunkUpdateInterval: 5,
+      };
+  template.id = '';
+  template.name = '';
+  template.modelPath = '';
+  editing.value = withDefaults(template);
   isNew.value = true;
-  editing.value = {
-    id: '',
-    name: '',
-    provider: 'ollama',
-    apiEndpoint: 'http://localhost:11434/v1/chat/completions',
-    narrativeModel: '',
-    metaModel: '',
-    utilityModel: '',
-    temperature: 0.7,
-    topP: 0.8,
-    topK: 20,
-    minP: null,
-    presencePenalty: 1.5,
-    frequencyPenalty: null,
-    repeatPenalty: null,
-    seed: null,
-    maxTokens: 10240,
-    contextSize: 65536,
-    thinkingTokens: 1500,
-    narrativeTokens: 500,
-    suggestionTokens: 200,
-    recentChunksCount: 20,
-    chunkUpdateInterval: 5,
-    thinkBlockStart: '<think>',
-    thinkBlockEnd: '</think>',
-    narrativePrompt: '',
-    metaPrompt: '',
-    formatFixerPrompt: '',
-    chubImportPrompt: '',
-  };
+}
+
+function withDefaults(p) {
+  // Fill in fields that may be missing on legacy preset JSONs
+  if (p.modelPath == null) p.modelPath = '';
+  if (p.gpuLayers == null) p.gpuLayers = 99;
+  if (p.port == null) p.port = 8080;
+  if (p.contextSize == null) p.contextSize = 65536;
+  return p;
 }
 
 async function save() {
   if (!editing.value.id || !editing.value.name) return;
   const saved = await store.savePreset(editing.value);
   if (saved) {
-    editing.value = JSON.parse(JSON.stringify(saved));
+    editing.value = withDefaults(JSON.parse(JSON.stringify(saved)));
     isNew.value = false;
   }
 }
@@ -562,5 +569,12 @@ async function remove(id) {
     await store.deletePreset(id);
     if (editing.value?.id === id) editing.value = null;
   }
+}
+
+async function setAsDefault() {
+  if (!editing.value) return;
+  await store.makeDefault(editing.value.id);
+  // Reflect on the currently edited copy as well
+  editing.value.isDefault = true;
 }
 </script>

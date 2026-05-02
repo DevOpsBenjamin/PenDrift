@@ -58,8 +58,8 @@ function openSession(id) {
   router.push({ name: 'session', params: { id } });
 }
 
-async function handleCreate({ templateId, title }) {
-  const session = await store.createSession({ templateId, title });
+async function handleCreate({ templateId, title, settingsPresetId }) {
+  const session = await store.createSession({ templateId, title, settingsPresetId });
   if (session) {
     showCreateModal.value = false;
     router.push({ name: 'session', params: { id: session.id } });

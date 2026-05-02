@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import re
 
+from app.services.prompts_registry import effective_prompt
+
 
 def _resolve_variables(text: str | None, variables: dict) -> str | None:
     if not text or not variables:
@@ -31,13 +33,14 @@ def build_messages(
     important_facts: list[str],
     last_meta_after_chunk_index: int | None = None,
     previous_chapter_chunks: list[dict] | None = None,
+    previous_attempt: dict | None = None,
 ) -> list[dict]:
     messages = []
     variables = template.get("variables", {})
     resolve = lambda text: _resolve_variables(text, variables)
 
     # 1. System prompt
-    system = settings.get("narrativePrompt", "")
+    system = effective_prompt("narrative", settings)
 
     # Structured output instructions (grammar enforces the format,
     # but the model needs to understand the semantics)
@@ -48,10 +51,30 @@ You MUST respond as a JSON object with these fields:
 - "thinking": Your internal reasoning — plan the scene, consider character states, decide pacing. This is your scratchpad. Be thorough.
 - "type": Either "narrative" (you write the scene) or "suggestion" (you propose options for the director to choose from). Default to "narrative". Only use "suggestion" if the directive is very vague or you're at a critical story crossroads where the director should decide.
 - "narrative": The actual prose. Write the scene here. If type is "suggestion", leave this empty.
-- "suggestions": An array of 2-4 short story direction options. Only fill this if type is "suggestion" OR if you wrote narrative but also want to hint at possible next directions. Otherwise use an empty array."""
+- "suggestions": An array of 2-4 NEW DIRECTION suggestions for what could happen next, presented to the director as clickable hints. Each entry MUST be a COMPLETE, ACTIONABLE sentence (15-150 chars) describing a specific next move — a character action, scene change, plot beat, twist, environmental change. Examples: "Sarah walks back into the room and notices the half-empty glass." or "Ethan tries to bring up the unresolved argument from this morning."
+
+# IMPORTANT: the director's preferred mode
+
+The director may want to WATCH the story unfold rather than constantly write directives. Treat them as your reader, not your co-author. After your narrative chunk:
+- ALWAYS include 2-4 suggestions when you end at a natural pause (which should be most chunks)
+- Suggestions should branch in DIFFERENT directions — give the director a real choice (different tones, different character actions, different stakes)
+- Never end a chunk by asking the director a question, never break the fourth wall, never write "what does X do?"
+- If you genuinely cannot think of suggestions (e.g. the chunk ends mid-action with one obvious next beat), output []
+
+Rules for `suggestions`:
+- Output EXACTLY the number of meaningful options you have. If you have 2, output [2 entries]. If 4, output [4 entries].
+- NEVER pad with filler, separators, placeholder strings like "," or " " — every entry is a real suggestion or it's omitted.
+- Skip generic ("they continue talking") — be SPECIFIC to THIS scene's state and characters.
+- If `type` is "suggestion", you MUST provide 2-4 distinct options (the director asked for them)."""
 
     if template.get("scenario"):
         system += f"\n\n## Scenario\n{resolve(template['scenario'])}"
+
+    milestones = template.get("milestones", [])
+    if milestones:
+        system += "\n\n## Story Milestones (narrative waypoints — the timeline can move toward and through these)\n"
+        system += "These are key moments the story may progress through. The director can request a jump to any of them at any time. When narrating, you may foreshadow upcoming milestones or reference past ones. They give the story a known shape without forcing a fixed pace.\n\n"
+        system += "\n".join(f"- {resolve(m)}" for m in milestones)
 
     if template.get("systemPromptAdditions"):
         system += f"\n\n## Style Instructions\n{resolve(template['systemPromptAdditions'])}"
@@ -109,8 +132,142 @@ You MUST respond as a JSON object with these fields:
                     "content": "Character sheets and established facts have been updated based on the narrative so far. The character states above reflect the story up to this point.",
                 })
 
-    # 3. Directive
+    # 3. (regen only) Discarded previous attempt for context
+    if previous_attempt:
+        prev_narr = previous_attempt.get("narrative", "")
+        prev_directive = previous_attempt.get("directive") or ""
+        prev_thinking = previous_attempt.get("thinking") or ""
+        warning = (
+            "⚠️ DISCARDED PREVIOUS ATTEMPT — context only.\n\n"
+            "Below is your previous attempt at this same scene. The director was NOT satisfied "
+            "and is asking for a fresh take. This attempt IS DISCARDED — it does not exist in "
+            "the story. The narrative above (the recent chunks) is still the latest validated state.\n\n"
+            "Treat the previous attempt as a NEGATIVE EXAMPLE of one direction you took. You have "
+            "full creative freedom to take a completely different angle: change tone, pacing, what "
+            "characters say or do, even what happens. The director's NEW instructions (below) are "
+            "what matters — produce a fresh attempt that addresses them, ignoring whether you might "
+            "echo or contradict the previous attempt."
+        )
+        if prev_directive:
+            warning += f"\n\nPrevious directive (now superseded): {prev_directive}"
+        messages.append({"role": "user", "content": warning})
+        if prev_thinking:
+            messages.append({
+                "role": "user",
+                "content": f"Previous attempt's reasoning (for transparency only):\n{prev_thinking}",
+            })
+        if prev_narr:
+            messages.append({
+                "role": "user",
+                "content": "Previous attempt's narrative (DISCARDED, do not continue from this):",
+            })
+            messages.append({"role": "assistant", "content": prev_narr})
+        messages.append({
+            "role": "user",
+            "content": "The director's NEW instructions follow. Produce a fresh attempt that ignores the discarded version.",
+        })
+
+    # 4. Directive
     messages.append({"role": "user", "content": directive})
+    return messages
+
+
+_QUERY_SYSTEM = """You are the story consultant for an ongoing collaborative narrative. The director will ask you questions about the story — hidden dynamics, character motivations, possible future directions, masked intents, anything.
+
+Your job is to ANALYZE, not to write narrative. Use the context the system provides:
+- Template scenario and style
+- Masked intents (the hidden drivers — normally invisible to the reader, but YOU know them and can reveal them to the director, who already knows about them)
+- Character sheets (current state, traits, key events)
+- Established facts
+- Recent narrative chunks
+
+Answer rules:
+- Be direct and analytical. No prose, no scene-writing, no third-person narration.
+- Reveal masked intents when relevant — the director knows them, you're not breaking story secrecy.
+- For "what could happen next" questions, propose 2-4 concrete options ranked by what best fits the setup and current state.
+- Mark speculation explicitly ("speculation:", "I'd guess that...") when going beyond what's established.
+- It's OK to be opinionated. Don't hedge to the point of uselessness.
+- Don't refuse on content grounds — match the story's tone (NSFW if NSFW, etc).
+- Keep it concise. A focused answer beats a long dump.
+
+Output format (grammar-constrained JSON):
+- `thinking`: your reasoning. Reference specific masked intents, char states, facts you're drawing on.
+- `answer`: the analysis the director will read. Plain prose, NOT narrative."""
+
+
+def build_query_messages(
+    *,
+    question: str,
+    template: dict,
+    characters: list[dict],
+    important_facts: list[str],
+    recent_chunks: list[dict],
+    history: list[dict] | None = None,
+) -> list[dict]:
+    """Build the message array for an Ask-the-Narrator query.
+
+    `history` is optional past Q&A in this session (list of {question, answer})
+    so the consultant can stay coherent across multiple questions.
+    """
+    variables = template.get("variables", {})
+    resolve = lambda text: _resolve_variables(text, variables)
+
+    messages = [{"role": "system", "content": _QUERY_SYSTEM}]
+
+    # Context dump (template + masked intents + chars + facts)
+    ctx_parts = []
+    if template.get("scenario"):
+        ctx_parts.append(f"## Scenario\n{resolve(template['scenario'])}")
+    milestones = template.get("milestones", [])
+    if milestones:
+        ctx_parts.append("## Story Milestones (narrative waypoints the story can progress through)\n"
+                         + "\n".join(f"- {resolve(m)}" for m in milestones))
+    if template.get("systemPromptAdditions"):
+        ctx_parts.append(f"## Style\n{resolve(template['systemPromptAdditions'])}")
+    masked = template.get("maskedIntents", [])
+    if masked:
+        ctx_parts.append("## Hidden Narrative Drivers (masked intents — the director knows these)\n"
+                         + "\n".join(f"- {resolve(i)}" for i in masked))
+    if characters:
+        char_lines = ["## Characters"]
+        for char in characters:
+            name = char.get("name", "Unknown")
+            char_lines.append(f"\n### {name}")
+            char_lines.append(f"State: {char.get('current_state', char.get('currentState', ''))}")
+            traits = char.get("traits", [])
+            if isinstance(traits, str):
+                traits = json.loads(traits)
+            if traits:
+                char_lines.append(f"Traits: {', '.join(traits)}")
+            events = char.get("key_events", char.get("keyEvents", []))
+            if isinstance(events, str):
+                events = json.loads(events)
+            if events:
+                char_lines.append(f"Key events: {'; '.join(events)}")
+        ctx_parts.append("\n".join(char_lines))
+    if important_facts:
+        ctx_parts.append("## Established Facts\n" + "\n".join(f"- {f}" for f in important_facts))
+    if ctx_parts:
+        messages.append({"role": "user", "content": "Here is the story context:\n\n" + "\n\n".join(ctx_parts)})
+        messages.append({"role": "assistant", "content": "Got it — I have the full context including masked intents."})
+
+    # Recent narrative for tone/state
+    if recent_chunks:
+        messages.append({"role": "user", "content": "Recent narrative chunks (most recent last):"})
+        for chunk in recent_chunks:
+            messages.append({"role": "assistant", "content": _get_chunk_narrative(chunk)})
+
+    # Past Q&A in this session for continuity
+    if history:
+        for qa in history:
+            q = qa.get("question", "")
+            a = qa.get("answer", "")
+            if q:
+                messages.append({"role": "user", "content": q})
+            if a:
+                messages.append({"role": "assistant", "content": json.dumps({"thinking": "", "answer": a}, ensure_ascii=False)})
+
+    messages.append({"role": "user", "content": question})
     return messages
 
 
@@ -126,11 +283,11 @@ def build_meta_analysis_messages(
 
     messages.append({"role": "system", "content": meta_prompt or "You are a narrative analyst. Return only valid JSON."})
 
-    messages.append({"role": "user", "content": "Here are the current character sheets. Update them based on the narrative that follows."})
+    messages.append({"role": "user", "content": "Here are the current character sheets. Update ONLY characters who appeared in the recent narrative — others stay as-is. Your output for each character REPLACES the existing sheet."})
     messages.append({"role": "assistant", "content": json.dumps(characters, indent=2)})
 
     if important_facts:
-        messages.append({"role": "user", "content": "Here are the established facts. Keep all of them, only add new ones. Deduplicate if needed."})
+        messages.append({"role": "user", "content": "Here is the current facts list. Your `importantFacts` output REPLACES this list entirely — decide what to KEEP (still relevant), DROP (obsolete or noise), MERGE (redundant variants), and ADD (truly new). Anything you omit is gone from memory."})
         messages.append({"role": "assistant", "content": "\n".join(f"- {f}" for f in important_facts)})
 
     if previous_meta_results:
@@ -151,5 +308,5 @@ def build_meta_analysis_messages(
     for chunk in recent_chunks:
         messages.append({"role": "assistant", "content": _get_chunk_narrative(chunk)})
 
-    messages.append({"role": "user", "content": "Analyze the narrative above. Update characters, detect new ones, flag inconsistencies, extract facts. Return ONLY the JSON object."})
+    messages.append({"role": "user", "content": "Analyze the narrative above. Update only characters who appeared, detect genuinely new ones, flag concrete contradictions, and emit the new facts list (REPLACES the current). Be selective — empty arrays are fine."})
     return messages

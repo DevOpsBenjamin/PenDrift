@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
     title           TEXT NOT NULL,
     template_id     TEXT NOT NULL,
+    template_version TEXT,
     settings_preset_id TEXT NOT NULL DEFAULT 'default',
     cover_image     TEXT,
     last_meta_after_chunk_index INTEGER,
@@ -104,12 +105,25 @@ async def get_db() -> aiosqlite.Connection:
 async def init_db():
     db = await get_db()
     await db.executescript(SCHEMA)
+    await _migrate_columns(db)
     await db.commit()
     _seed_defaults()
 
 
+async def _migrate_columns(db: aiosqlite.Connection):
+    """Idempotent ALTERs for columns added after initial schema."""
+    cur = await db.execute("PRAGMA table_info(sessions)")
+    cols = {row[1] for row in await cur.fetchall()}
+    if "template_version" not in cols:
+        await db.execute("ALTER TABLE sessions ADD COLUMN template_version TEXT")
+
+
 def _seed_defaults():
-    """Copy default presets/templates to data/ if they don't exist (JSON files, same as Node version)."""
+    """Copy default presets/templates to data/ if they don't exist, and fill in
+    any keys that have since been added to the source defaults (never overwrites
+    existing values)."""
+    import json
+
     for subdir in ("settings", "templates"):
         src = DEFAULTS_DIR / subdir
         dst = DATA_DIR / "presets" / subdir
@@ -120,3 +134,13 @@ def _seed_defaults():
             target = dst / f.name
             if not target.exists():
                 shutil.copy2(f, target)
+                continue
+            try:
+                source = json.loads(f.read_text(encoding="utf-8"))
+                current = json.loads(target.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            missing = {k: v for k, v in source.items() if k not in current}
+            if missing:
+                current.update(missing)
+                target.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")

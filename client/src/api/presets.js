@@ -9,5 +9,5 @@ export const saveSettingsPreset = (preset) =>
 
 export const deleteSettingsPreset = (id) => api.delete(`presets/settings/${id}`).json();
 
-export const listModels = (apiEndpoint, provider) =>
-  api.post('presets/settings/models', { json: { apiEndpoint, provider } }).json();
+export const makeDefaultPreset = (id) =>
+  api.post(`presets/settings/${encodeURIComponent(id)}/make-default`).json();

@@ -11,3 +11,4 @@ dependencies:
     - aiosqlite>=0.20
     - httpx>=0.28
     - pydantic>=2.10
+    - python-multipart>=0.0.20

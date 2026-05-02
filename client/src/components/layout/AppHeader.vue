@@ -52,6 +52,7 @@ const mobileNav = ref(false);
 const links = [
   { to: '/', label: 'Sessions' },
   { to: '/templates', label: 'Templates' },
+  { to: '/activity', label: 'Activity' },
   { to: '/settings', label: 'Settings' },
 ];
 </script>

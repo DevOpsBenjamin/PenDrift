@@ -10,7 +10,7 @@ from app.database import get_db
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def get_api_logs(session_id: str):
     db = await get_db()
     rows = await db.execute_fetchall(

@@ -152,6 +152,24 @@
     <!-- Display mode -->
     <div v-else class="prose-narrative" v-html="formattedNarrative"></div>
 
+    <!-- Suggestions from the model — only on the last chunk so the user has a
+         clear set of "what next?" options without older suggestions cluttering
+         the timeline. Click a chip to prefill the directive input. -->
+    <div v-if="!editing && isLast && !finalized && suggestions.length"
+      class="mt-4 flex flex-wrap gap-2">
+      <span class="text-[10px] uppercase tracking-wider text-text-muted/60 self-center mr-1">Suggestions</span>
+      <button
+        v-for="(s, i) in suggestions"
+        :key="i"
+        type="button"
+        class="px-3 py-1.5 text-xs bg-bg-surface border border-border-subtle rounded-full text-text-secondary
+               hover:border-accent/40 hover:text-text-primary hover:bg-accent/5 transition-all cursor-pointer
+               text-left max-w-md"
+        title="Click to choose this direction (auto-submits). Shift+click to edit first."
+        @click="useSuggestion(s, $event)"
+      >{{ s }}</button>
+    </div>
+
     <!-- Version swipe arrows — hidden when finalized -->
     <div v-if="!editing && !finalized" class="flex items-center justify-between mt-3">
       <button
@@ -176,6 +194,9 @@
 import { ref, computed, nextTick } from 'vue';
 import { renderNarrative } from '../../utils/narrative-renderer.js';
 import ThinkingPanel from './ThinkingPanel.vue';
+import { useNarrativeStore } from '../../stores/narrative.js';
+
+const store = useNarrativeStore();
 
 const props = defineProps({
   chunk: Object,
@@ -204,6 +225,22 @@ const activeVer = computed(() => {
 });
 
 const formattedNarrative = computed(() => renderNarrative(activeVer.value.narrative));
+const suggestions = computed(() => {
+  const raw = activeVer.value.suggestions;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(s => typeof s === 'string' && s.trim().length > 2);
+});
+
+function useSuggestion(text, event) {
+  // Default: auto-submit (the director is choosing a path, not writing one).
+  // Hold Shift / Ctrl / Alt to prefill instead — for the rare case the
+  // director wants to tweak the suggestion before sending.
+  if (event && (event.shiftKey || event.ctrlKey || event.altKey)) {
+    store.prefillDirective(text);
+    return;
+  }
+  store.chooseSuggestion(text);
+}
 
 function onSwipeRight() {
   if (activeIndex.value < totalVersions.value - 1) {

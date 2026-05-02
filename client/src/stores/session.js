@@ -56,6 +56,31 @@ export const useSessionStore = defineStore('session', {
       }
     },
 
+    async updateCurrentPreset(presetId) {
+      if (!this.currentSession) return;
+      try {
+        const updated = await sessionsApi.updateSession(this.currentSession.id, { settingsPresetId: presetId });
+        this.currentSession = updated;
+        // Update the matching session in the list too
+        const idx = this.sessions.findIndex(s => s.id === updated.id);
+        if (idx >= 0) this.sessions[idx] = updated;
+      } catch (err) {
+        this.error = err.message;
+      }
+    },
+
+    async updateCurrentTemplateVersion(version) {
+      if (!this.currentSession) return;
+      try {
+        const updated = await sessionsApi.setSessionTemplateVersion(this.currentSession.id, version);
+        this.currentSession = updated;
+        const idx = this.sessions.findIndex(s => s.id === updated.id);
+        if (idx >= 0) this.sessions[idx] = updated;
+      } catch (err) {
+        this.error = err.message;
+      }
+    },
+
     async deleteSession(id) {
       this.error = null;
       try {

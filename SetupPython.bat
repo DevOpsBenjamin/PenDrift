@@ -24,8 +24,18 @@ if exist "%CONDA_DIR%\condabin\conda.bat" (
         exit /b 1
     )
     echo Installing Miniconda locally to %CONDA_DIR% ...
-    start /wait "" "%INSTALLER%" /S /InstallationType=JustMe /RegisterPython=0 /AddToPath=0 /D=%CONDA_DIR%
-    del "%INSTALLER%" 2>nul
+    echo.
+    echo === MANUAL INSTALL REQUIRED ===
+    echo The installer will now open.
+    echo Install to: %CONDA_DIR%
+    echo - Choose "Just Me"
+    echo - UNCHECK "Add to PATH"
+    echo - UNCHECK "Register as default Python"
+    echo ================================
+    echo.
+    start "" "%INSTALLER%"
+    echo Press any key AFTER the installer finishes...
+    pause >nul
     if not exist "%CONDA_DIR%\condabin\conda.bat" (
         echo [ERROR] Miniconda installation failed.
         pause

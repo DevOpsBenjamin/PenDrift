@@ -50,14 +50,28 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue';
+import { ref, nextTick, watch } from 'vue';
+import { useNarrativeStore } from '../../stores/narrative.js';
 
 const props = defineProps({ generating: Boolean, finalized: Boolean });
 const emit = defineEmits(['submit']);
 
+const store = useNarrativeStore();
 const directive = ref('');
 const isKeyMoment = ref(false);
 const textarea = ref(null);
+
+// Watch for "use suggestion" prefills coming from ChunkBlock — populate the
+// textarea so the user can edit before sending. Auto-focus and resize.
+watch(() => store.pendingDirective, (text) => {
+  if (!text) return;
+  directive.value = text;
+  store.pendingDirective = '';
+  nextTick(() => {
+    autoResize();
+    textarea.value?.focus();
+  });
+});
 
 function submit(e) {
   if (e) e.preventDefault();

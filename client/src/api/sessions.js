@@ -11,3 +11,6 @@ export const updateSession = (id, updates) =>
   api.put(`sessions/${id}`, { json: updates }).json();
 
 export const deleteSession = (id) => api.delete(`sessions/${id}`).json();
+
+export const setSessionTemplateVersion = (id, version) =>
+  api.put(`sessions/${id}/template-version`, { json: { version } }).json();

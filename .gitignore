@@ -13,3 +13,7 @@ server-python/env/
 __pycache__/
 *.pyc
 *.pyo
+
+# Local installers / test card stash
+miniconda_installer.exe
+Chub/

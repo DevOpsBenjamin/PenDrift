@@ -14,7 +14,7 @@ from app.services.title_generator import generate_chapter_title
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("")
 async def list_chapters(session_id: str):
     db = await get_db()
     rows = await db.execute_fetchall(

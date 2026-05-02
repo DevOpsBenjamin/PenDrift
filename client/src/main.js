@@ -9,6 +9,7 @@ const routes = [
   { path: '/session/:id', name: 'session', component: () => import('./views/SessionView.vue') },
   { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue') },
   { path: '/templates', name: 'templates', component: () => import('./views/TemplatesView.vue') },
+  { path: '/activity', name: 'activity', component: () => import('./views/ActivityView.vue') },
 ];
 
 const router = createRouter({

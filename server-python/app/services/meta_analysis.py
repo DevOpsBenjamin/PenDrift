@@ -3,51 +3,15 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime, timezone
 
 from app.database import get_db
 from app.services.llm import generate_completion
 from app.services.prompts import build_meta_analysis_messages
+from app.services.prompts_registry import effective_prompt
+from app.utils.grammars import META_GRAMMAR
 
 log = logging.getLogger("pendrift.meta")
-
-
-def _try_parse_json(text: str) -> dict | None:
-    # Direct parse
-    try:
-        return json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    # Markdown code block
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except (json.JSONDecodeError, TypeError):
-            pass
-    # Find JSON object
-    m = re.search(r"\{[\s\S]*\}", text)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return None
-
-
-async def _fix_json_with_utility(raw_text: str, settings: dict, session_id: str) -> dict | None:
-    fixer_prompt = settings.get("formatFixerPrompt", "Extract and return only valid JSON from the following text.")
-    messages = [
-        {"role": "system", "content": fixer_prompt},
-        {"role": "user", "content": raw_text},
-    ]
-    result = await generate_completion(
-        messages,
-        temperature=0.1,
-        max_tokens=settings.get("maxTokens", 4096),
-    )
-    return _try_parse_json(result["narrative"])
 
 
 async def run_meta_analysis(session_id: str, recent_chunks: list[dict], settings: dict) -> dict:
@@ -84,7 +48,7 @@ async def run_meta_analysis(session_id: str, recent_chunks: list[dict], settings
         characters=characters,
         recent_chunks=recent_chunks,
         important_facts=important_facts,
-        meta_prompt=settings.get("metaPrompt", ""),
+        meta_prompt=effective_prompt("meta", settings),
         previous_meta_results=previous_meta,
     )
 
@@ -97,17 +61,12 @@ async def run_meta_analysis(session_id: str, recent_chunks: list[dict], settings
             messages,
             temperature=0.2,
             max_tokens=(settings.get("maxTokens", 4096)) * 2,
+            grammar=META_GRAMMAR,
+            kind="meta",
+            session_id=session_id,
         )
         raw_response = response["raw"]
-        result = _try_parse_json(response["narrative"])
-
-        if not result:
-            log.info("Meta JSON parse failed, trying format fixer...")
-            result = await _fix_json_with_utility(response["raw"], settings, session_id)
-
-        if not result:
-            raise ValueError("Could not parse meta-analysis response even after format fixing")
-
+        result = json.loads(raw_response)
     except Exception as e:
         log.error("Meta-analysis failed: %s", e)
         chunk_ids = [c.get("id", "") for c in recent_chunks]
@@ -139,12 +98,13 @@ async def run_meta_analysis(session_id: str, recent_chunks: list[dict], settings
                  json.dumps(new_char.get("traits", [])), json.dumps(new_char.get("keyEvents", [])), now),
             )
 
-    # Add new facts (deduplicate)
-    for fact in result.get("importantFacts", []):
-        existing = await db.execute_fetchall(
-            "SELECT 1 FROM facts WHERE session_id = ? AND fact = ?", (session_id, fact)
-        )
-        if not existing:
+    # REPLACE the facts list wholesale: the meta output IS the new list. This
+    # is intentional — the meta prompt asks the model to decide keep/drop/merge
+    # so the state stays tight as the story grows. Without wholesale replace,
+    # the list would grow unbounded and pollute future generations.
+    if "importantFacts" in result:
+        await db.execute("DELETE FROM facts WHERE session_id = ?", (session_id,))
+        for fact in result.get("importantFacts", []):
             await db.execute(
                 "INSERT INTO facts (session_id, fact, created_at) VALUES (?,?,?)",
                 (session_id, fact, now),

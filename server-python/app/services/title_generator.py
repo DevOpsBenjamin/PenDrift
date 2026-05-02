@@ -6,6 +6,7 @@ import logging
 
 from app.database import get_db
 from app.services.llm import generate_completion
+from app.utils.grammars import TITLE_GRAMMAR
 
 log = logging.getLogger("pendrift.title_gen")
 
@@ -27,7 +28,7 @@ async def generate_chapter_title(session_id: str, chunks: list[dict], settings: 
 
     try:
         messages = [
-            {"role": "system", "content": "You are a chapter title generator for a novel. You will receive excerpts from the beginning, middle, and end of a chapter, plus a meta-analysis summary. Suggest a short, evocative chapter title (3-6 words max). Return ONLY the title, nothing else. No quotes, no explanation."},
+            {"role": "system", "content": "You are a chapter title generator for a novel. You will receive excerpts from the beginning, middle, and end of a chapter, plus a meta-analysis summary. Suggest a short, evocative chapter title (3-6 words max). Return JSON with your reasoning in `thinking` and the final title in `title` (no surrounding quotes)."},
         ]
 
         # First 2 chunks
@@ -67,12 +68,16 @@ async def generate_chapter_title(session_id: str, chunks: list[dict], settings: 
         result = await generate_completion(
             messages,
             temperature=0.7,
-            max_tokens=100,
+            max_tokens=400,
+            grammar=TITLE_GRAMMAR,
+            kind="title",
+            session_id=session_id,
         )
 
-        title = result["narrative"]
+        parsed = json.loads(result["raw"])
+        title = (parsed.get("title") or "").strip()
         if title and len(title) < 80:
-            return title.replace('"', "").replace("'", "").strip()
+            return title
 
     except Exception as e:
         log.error("Title generation failed: %s", e)

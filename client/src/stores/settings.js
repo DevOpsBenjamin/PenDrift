@@ -47,6 +47,23 @@ export const useSettingsStore = defineStore('settings', {
       }
     },
 
+    async makeDefault(id) {
+      try {
+        await presetsApi.makeDefaultPreset(id);
+        // Update local state: only one preset is isDefault at a time
+        for (const p of this.presets) {
+          p.isDefault = p.id === id;
+        }
+      } catch (err) {
+        this.error = err.message;
+      }
+    },
+
+    defaultPresetId() {
+      const def = this.presets.find(p => p.isDefault);
+      return def?.id || 'default';
+    },
+
     async fetchTemplates() {
       this.loading = true;
       try {

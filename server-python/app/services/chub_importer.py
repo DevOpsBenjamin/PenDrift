@@ -4,36 +4,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 
 import httpx
 
 from app.services.llm import generate_completion
+from app.services.prompts_registry import effective_prompt
+from app.utils.grammars import TEMPLATE_GRAMMAR
 
 log = logging.getLogger("pendrift.chub_import")
-
-# Fallback prompt if not set in preset — should not normally be used
-_DEFAULT_IMPORT_PROMPT = "Convert this character card into a PenDrift template. Return ONLY valid JSON."
-
-# GBNF grammar to force valid PenDrift template JSON output
-TEMPLATE_GRAMMAR = r'''
-root   ::= "{" ws "\"name\"" ws ":" ws string "," ws "\"description\"" ws ":" ws string "," ws "\"variables\"" ws ":" ws object "," ws "\"characters\"" ws ":" ws characters "," ws "\"scenario\"" ws ":" ws string "," ws "\"maskedIntents\"" ws ":" ws stringarray "," ws "\"systemPromptAdditions\"" ws ":" ws string ws "}"
-
-characters ::= "[" ws character ( "," ws character )* ws "]"
-character  ::= "{" ws "\"name\"" ws ":" ws string "," ws "\"description\"" ws ":" ws string "," ws "\"initialState\"" ws ":" ws string ws "}"
-
-stringarray ::= "[" ws string ( "," ws string )* ws "]"
-
-object ::= "{" ws ( objectpair ( "," ws objectpair )* )? ws "}"
-objectpair ::= string ws ":" ws string
-
-string ::= "\"" chars "\""
-chars  ::= char*
-char   ::= [^"\\] | "\\" escape
-escape ::= ["\\/bfnrt] | "u" hexchar hexchar hexchar hexchar
-hexchar ::= [0-9a-fA-F]
-
-ws ::= [ \t\n\r]*
-'''
 
 
 async def fetch_chub_card(url_or_path: str) -> dict:
@@ -158,51 +137,152 @@ def _build_conversion_input(card: dict) -> str:
     return "\n".join(parts)
 
 
+async def _llm_template_call(
+    messages: list[dict],
+    settings: dict,
+    *,
+    kind: str,
+    temperature: float = 0.4,
+    max_tokens: int = 4096,
+) -> dict:
+    """Shared LLM call for any chub_import-shaped operation (import, rerun,
+    enrich). Returns the parsed template body with `thinking` stripped."""
+    result = await generate_completion(
+        messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        grammar=TEMPLATE_GRAMMAR,
+        kind=kind,
+    )
+
+    raw = result["raw"]
+    try:
+        template = json.loads(raw)
+    except json.JSONDecodeError as e:
+        log.error("%s: JSON decode failed at char %d/%d: %s", kind, e.pos, len(raw), e.msg)
+        raise ValueError(
+            f"Model output is not valid JSON ({e.msg} at char {e.pos} of {len(raw)}). "
+            f"Check Activity view → recent call → dump file."
+        ) from e
+
+    template.pop("thinking", None)
+    return template
+
+
 async def convert_card_to_template(
     card: dict,
     settings: dict,
     *,
     temperature: float = 0.4,
     max_tokens: int = 4096,
-    use_grammar: bool = True,
 ) -> dict:
-    """Use the LLM to convert a character card into a PenDrift template.
+    """Convert a character card into a PenDrift template (fresh import).
 
-    The conversion prompt is read from settings['chubImportPrompt'].
+    The conversion prompt is the bundled `chub_import` prompt unless the
+    preset overrides it via `chubImportPrompt`.
     """
-    import_prompt = settings.get("chubImportPrompt") or _DEFAULT_IMPORT_PROMPT
-
     messages = [
-        {"role": "system", "content": import_prompt},
+        {"role": "system", "content": effective_prompt("chub_import", settings)},
         {"role": "user", "content": _build_conversion_input(card)},
     ]
-
-    result = await generate_completion(
-        messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        grammar=TEMPLATE_GRAMMAR if use_grammar else None,
+    template = await _llm_template_call(
+        messages, settings, kind="chub-import",
+        temperature=temperature, max_tokens=max_tokens,
     )
-
-    text = result["narrative"]
-
-    # Parse the JSON output
-    try:
-        template = json.loads(text)
-    except json.JSONDecodeError:
-        # Try extracting from markdown block
-        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-        if m:
-            template = json.loads(m.group(1))
-        else:
-            m = re.search(r"\{[\s\S]*\}", text)
-            if m:
-                template = json.loads(m.group(0))
-            else:
-                raise ValueError(f"LLM returned unparseable output: {text[:200]}")
-
-    # Generate a stable ID from the name
     template_id = re.sub(r"[^a-z0-9]+", "_", template.get("name", "imported").lower()).strip("_")
     template["id"] = template_id
-
     return template
+
+
+async def enrich_with_new_card(
+    new_card: dict,
+    current_template: dict,
+    settings: dict,
+    *,
+    temperature: float = 0.4,
+    max_tokens: int = 4096,
+) -> dict:
+    """Merge a NEW card (different character from the same shared universe)
+    into the existing template. Used to grow a multi-character template from
+    multiple chub cards (e.g. add Ethan and Lauren to a Tiffany template).
+
+    The system prompt is the bundled `enrich` prompt; the user message
+    contains the new card and the current template body."""
+    current_for_prompt = {k: v for k, v in current_template.items() if k != "coverImage"}
+    user_msg = (
+        f"# New Card (to merge into the template)\n\n{_build_conversion_input(new_card)}\n\n"
+        f"---\n\n"
+        f"# Current Template (preserve what's good, enrich with new info)\n\n"
+        f"```json\n{json.dumps(current_for_prompt, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"Merge the new card into the current template now. Output the complete enriched template."
+    )
+    messages = [
+        {"role": "system", "content": effective_prompt("enrich", settings)},
+        {"role": "user", "content": user_msg},
+    ]
+    template = await _llm_template_call(
+        messages, settings, kind="enrich",
+        temperature=temperature, max_tokens=max_tokens,
+    )
+    template["id"] = current_template.get("id") or template.get("id")
+    return template
+
+
+async def rerun_with_current(
+    card: dict,
+    current_template: dict,
+    settings: dict,
+    *,
+    temperature: float = 0.4,
+    max_tokens: int = 4096,
+) -> dict:
+    """Re-analyze a card against the CURRENT template to fix/fill/correct.
+
+    The system prompt is the bundled `rerun` prompt; the user message
+    includes both the original source card and the current template body
+    so the model can audit and improve."""
+    current_for_prompt = {k: v for k, v in current_template.items() if k != "coverImage"}
+    user_msg = (
+        f"# Original Card\n\n{_build_conversion_input(card)}\n\n"
+        f"---\n\n"
+        f"# Current Template (for audit & improvement)\n\n"
+        f"```json\n{json.dumps(current_for_prompt, indent=2, ensure_ascii=False)}\n```\n\n"
+        f"Audit the current template against the original card. Produce the improved template now."
+    )
+    messages = [
+        {"role": "system", "content": effective_prompt("rerun", settings)},
+        {"role": "user", "content": user_msg},
+    ]
+    template = await _llm_template_call(
+        messages, settings, kind="rerun",
+        temperature=temperature, max_tokens=max_tokens,
+    )
+    # Preserve the existing template id — rerun improves the same template
+    template["id"] = current_template.get("id") or template.get("id")
+    return template
+
+
+async def download_card_avatar(card: dict) -> tuple[bytes, str] | None:
+    """Best-effort fetch of the card's avatar URL. Returns (content_bytes,
+    extension_with_dot) or None if no avatar / fetch failed."""
+    url = card.get("avatar")
+    if not url or not isinstance(url, str) or not url.startswith("http"):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            r = await client.get(url, headers={"User-Agent": "PenDrift/0.2"})
+            if r.status_code != 200:
+                return None
+            ct = r.headers.get("content-type", "").lower()
+            if "jpeg" in ct or "jpg" in ct:
+                ext = ".jpg"
+            elif "webp" in ct:
+                ext = ".webp"
+            elif "gif" in ct:
+                ext = ".gif"
+            else:
+                ext = ".png"
+            return r.content, ext
+    except (httpx.HTTPError, OSError) as e:
+        log.warning("Could not fetch avatar from %s: %s", url, e)
+        return None
