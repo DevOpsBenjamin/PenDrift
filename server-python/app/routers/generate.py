@@ -187,6 +187,8 @@ async def _generation_pipeline(
     (via POST /api/jobs/{id}/cancel) stops it.
     """
     session_id = job.session_id
+    prep: dict | None = None
+    result_for_save: dict | None = None
     try:
         prep = await _prepare_generation(session_id, chapter_id, directive, is_key_moment, job=job)
         settings = prep["settings"]
@@ -218,7 +220,6 @@ async def _generation_pipeline(
                 return
             job.emit({"type": "model_loaded"})
 
-        result_for_save: dict | None = None
         async for ev in stream_narrative(
             prep["messages"],
             temperature=settings.get("temperature"),
@@ -266,8 +267,38 @@ async def _generation_pipeline(
             "metaUpdatePending": prep["meta_ran"],
         })
     except asyncio.CancelledError:
-        log.info("Generation pipeline cancelled (user-requested)")
-        job.emit({"type": "error", "message": "cancelled"})
+        log.info("Generation pipeline cancelled (user-requested) — saving partial chunk if any")
+        # If the cancel hit while the LLM was producing tokens, stream_narrative
+        # will have yielded a partial `done` event before re-raising. Treat it
+        # like a finished chunk so the user keeps what got written (even if
+        # it's just the thinking and the directive — the model's reasoning
+        # so far is useful context, and the user can regenerate against it
+        # as a "previous attempt"). Skip only when nothing came in at all.
+        has_content = result_for_save and (
+            result_for_save.get("narrative") or result_for_save.get("thinking")
+        )
+        if has_content and prep is not None:
+            try:
+                chunk_out = await asyncio.shield(
+                    _save_narrative_chunk(
+                        session_id, chapter_id, directive, is_key_moment,
+                        result_for_save, len(prep["chunks"])
+                    )
+                )
+                job.emit({
+                    "type": "done",
+                    "kind": "narrative",
+                    "chunk": chunk_out,
+                    "thinking": result_for_save.get("thinking", ""),
+                    "suggestions": [],
+                    "metaUpdatePending": prep.get("meta_ran", False),
+                    "cancelled": True,
+                })
+            except Exception:
+                log.exception("Failed to save partial chunk on cancel")
+                job.emit({"type": "error", "message": "cancelled"})
+        else:
+            job.emit({"type": "error", "message": "cancelled"})
         raise
     except HTTPException as e:
         job.emit({"type": "error", "message": e.detail})
@@ -465,6 +496,7 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
     BEFORE the target, streams a new narrative, then APPENDS it as a new
     version on the existing chunk."""
     session_id = job.session_id
+    result_for_save: dict | None = None
     try:
         db = await get_db()
 
@@ -552,7 +584,6 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
         narrative_budget = settings.get("narrativeTokens", 500)
         suggestion_budget = settings.get("suggestionTokens", 200)
 
-        result_for_save: dict | None = None
         async for ev in stream_narrative(
             messages,
             temperature=settings.get("temperature"),
@@ -606,8 +637,55 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
             "metaUpdatePending": False,
         })
     except asyncio.CancelledError:
-        log.info("Regen pipeline cancelled (user-requested)")
-        job.emit({"type": "error", "message": "cancelled"})
+        log.info("Regen pipeline cancelled (user-requested) — saving partial version if any")
+        # Same partial-save semantics as _generation_pipeline: if we got at
+        # least some narrative tokens before cancel, append the partial as a
+        # new version on the chunk so the user can keep what was written and
+        # regenerate against it. Otherwise just emit cancelled.
+        has_content = result_for_save and (
+            result_for_save.get("narrative") or result_for_save.get("thinking")
+        )
+        if has_content:
+            try:
+                async def _append_partial_version():
+                    db = await get_db()
+                    now = datetime.now(timezone.utc).isoformat()
+                    full_chunk = await db.execute_fetchall("SELECT versions FROM chunks WHERE id = ?", (chunk_id,))
+                    versions = json.loads(full_chunk[0][0])
+                    new_version = {
+                        "narrative": result_for_save.get("narrative", ""),
+                        "thinking": result_for_save.get("thinking"),
+                        "suggestions": [],
+                        "stats": result_for_save.get("stats", {}),
+                        "directive": directive,
+                        "from": result_for_save.get("modelName", "regenerate"),
+                        "createdAt": now,
+                    }
+                    versions.append(new_version)
+                    new_active = len(versions) - 1
+                    await db.execute(
+                        "UPDATE chunks SET versions = ?, active_version = ? WHERE id = ?",
+                        (json.dumps(versions), new_active, chunk_id),
+                    )
+                    await db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
+                    await db.commit()
+                    return versions, new_active
+
+                versions, new_active = await asyncio.shield(_append_partial_version())
+                job.emit({
+                    "type": "done",
+                    "kind": "narrative",
+                    "chunk": {"id": chunk_id, "versions": versions, "activeVersion": new_active},
+                    "thinking": result_for_save.get("thinking", ""),
+                    "suggestions": [],
+                    "metaUpdatePending": False,
+                    "cancelled": True,
+                })
+            except Exception:
+                log.exception("Failed to save partial regen version on cancel")
+                job.emit({"type": "error", "message": "cancelled"})
+        else:
+            job.emit({"type": "error", "message": "cancelled"})
         raise
     except Exception as e:
         log.exception("Regen pipeline failed")

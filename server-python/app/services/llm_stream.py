@@ -159,6 +159,10 @@ async def stream_narrative(
     model_name = ""
     thinking_tokens = 0
     narrative_tokens = 0
+    # Per-field text accumulators — used to assemble a partial result if the
+    # generation is cancelled mid-stream so the caller can still save what
+    # we got as a normal chunk.
+    field_text: dict[str, list[str]] = {"thinking": [], "type": [], "narrative": []}
 
     log.info("[narrative-stream] POST messages=%d max_tokens=%s",
              len(messages), max_tokens or "-")
@@ -188,6 +192,10 @@ async def stream_narrative(
                             narrative=narrative_tokens if "narrative" in fields_touched or call.narrative_tokens else None,
                         )
                     for parsed_ev in parsed_events:
+                        if parsed_ev["type"].endswith("_chunk"):
+                            fname = parsed_ev["type"].rsplit("_", 1)[0]
+                            if fname in field_text:
+                                field_text[fname].append(parsed_ev["text"])
                         yield parsed_ev
                 elif ev["type"] == "model":
                     model_name = ev["name"]
@@ -233,8 +241,33 @@ async def stream_narrative(
         }
 
     except asyncio.CancelledError:
+        # User cancelled mid-stream. Treat whatever we have (partial thinking
+        # + partial narrative) as a finished chunk so the caller saves it
+        # like any other generation. The Activity record stays marked
+        # `cancelled` for trace; the chunk itself looks like a regular one.
         llm_activity.mark_done(call, error="cancelled", raw_response=full_buffer or None)
-        yield {"type": "error", "message": "cancelled"}
+        partial_thinking = "".join(field_text["thinking"])
+        partial_type = "".join(field_text["type"]) or "narrative"
+        partial_narrative = "".join(field_text["narrative"])
+        stats = {
+            "promptTokens": usage.get("prompt_tokens"),
+            "completionTokens": usage.get("completion_tokens"),
+            "totalTokens": usage.get("total_tokens"),
+            "cancelled": True,
+        }
+        yield {
+            "type": "done",
+            "result": {
+                "thinking": partial_thinking,
+                "type": partial_type,
+                "narrative": partial_narrative,
+                "suggestions": [],
+                "modelName": model_name,
+                "stats": stats,
+                "raw": full_buffer,
+                "cancelled": True,
+            },
+        }
         raise
     except Exception as e:
         log.exception("[narrative-stream] unexpected error")
