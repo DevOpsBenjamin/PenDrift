@@ -81,13 +81,13 @@ class Job:
         q: asyncio.Queue = asyncio.Queue()
         for ev in self.events:
             q.put_nowait(ev)
-        if self._is_terminal():
+        if self.is_terminal():
             q.put_nowait(None)
         else:
             self._subscribers.append(q)
         return q
 
-    def _is_terminal(self) -> bool:
+    def is_terminal(self) -> bool:
         return self.status in ("done", "cancelled", "error")
 
     def _finalize(self) -> None:
@@ -193,6 +193,27 @@ def list_jobs() -> list[dict]:
     active = [_active[jid].to_dict() for jid in _order if jid in _active]
     historical = [j.to_dict() for j in reversed(_history)]
     return active + historical
+
+
+def find_active_session_job(
+    session_id: str,
+    *,
+    kinds: tuple[str, ...] | None = None,
+) -> Job | None:
+    """Return the in-flight job (queued or running) for this session, or None.
+
+    Used by per-session "is something already running?" checks (e.g., narrative
+    pipelines refuse to start a second one and tell the client to attach
+    instead). If `kinds` is provided, restrict to those kinds.
+    """
+    for jid in _order:
+        j = _active.get(jid)
+        if not j or j.session_id != session_id:
+            continue
+        if kinds is not None and j.kind not in kinds:
+            continue
+        return j
+    return None
 
 
 def cancel_job(job_id: str) -> bool:

@@ -16,7 +16,8 @@ from app.services.llm import generate_narrative
 from app.services.llm_stream import stream_narrative, stream_query
 from app.services.prompts import build_messages, build_query_messages
 from app.services.meta_analysis import run_meta_analysis
-from app.services import llm_process, template_store
+from app.services import llm_process, template_store, job_manager
+from app.services.job_manager import Job
 
 
 def _load_template_for_session(template_id: str, template_version: str | None) -> dict:
@@ -36,51 +37,16 @@ _jobs: dict[str, dict] = {}
 _meta_status: dict[str, dict] = {}
 
 
-class _StreamState:
-    """Tracks an in-progress streaming generation per session.
-
-    Buffers all emitted events so a late subscriber (e.g. user refreshes the
-    page) can replay everything that happened so far, then receive live events.
-    """
-
-    def __init__(self, session_id: str):
-        self.session_id = session_id
-        self.task: asyncio.Task | None = None
-        self.events: list[dict] = []   # full event log for replay
-        self.subscribers: list[asyncio.Queue] = []
-        self.done: bool = False
-
-    def emit(self, event: dict) -> None:
-        self.events.append(event)
-        for q in self.subscribers:
-            q.put_nowait(event)
-
-    def subscribe(self) -> asyncio.Queue:
-        """Return a queue pre-loaded with past events; will receive future ones too."""
-        q: asyncio.Queue = asyncio.Queue()
-        for ev in self.events:
-            q.put_nowait(ev)
-        if self.done:
-            q.put_nowait(None)  # already finished, signal end immediately
-        else:
-            self.subscribers.append(q)
-        return q
-
-    def finalize(self) -> None:
-        self.done = True
-        for q in self.subscribers:
-            q.put_nowait(None)
-        self.subscribers.clear()
+# In-flight narrative pipelines run as `Job`s in the global queue
+# (`services/job_manager.py`). Per-session uniqueness ("only one narrative
+# at a time per session") is enforced via `job_manager.find_active_session_job`
+# at endpoint entry rather than a local dict.
 
 
-# Active pipelines, keyed by session_id (one in-flight gen per session)
-_streams: dict[str, _StreamState] = {}
-
-
-async def _prepare_generation(session_id: str, chapter_id: str, directive: str, is_key_moment: bool, state=None):
+async def _prepare_generation(session_id: str, chapter_id: str, directive: str, is_key_moment: bool, job: Job | None = None):
     """Common prep: validate, run meta if needed, build messages + token budget.
 
-    If `state` is provided, emits progress events so the frontend can show what
+    If `job` is provided, emits progress events so the frontend can show what
     the backend is doing (loading settings, running meta-analysis, etc) instead
     of looking like the model is silently thinking."""
     db = await get_db()
@@ -118,8 +84,8 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
     if meta_due or is_key_moment:
         reason = "key_moment" if is_key_moment and not meta_due else "interval"
         log.info("Running meta-analysis (%s) before chunk %d", reason, len(chunks) + 1)
-        if state is not None:
-            state.emit({"type": "meta_starting", "reason": reason, "chunkCount": len(chunks)})
+        if job is not None:
+            job.emit({"type": "meta_starting", "reason": reason, "chunkCount": len(chunks)})
         _meta_status[session_id] = {"status": "updating", "result": None}
         try:
             meta_chunks = chunks[-interval:]
@@ -129,8 +95,8 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
             await db.commit()
             last_meta_idx = len(chunks) - 1
             meta_ran = True
-            if state is not None:
-                state.emit({
+            if job is not None:
+                job.emit({
                     "type": "meta_done",
                     "charactersUpdated": len(result.get("characterUpdates", [])) if isinstance(result, dict) else 0,
                     "newCharacters": len(result.get("newCharacters", [])) if isinstance(result, dict) else 0,
@@ -140,8 +106,8 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
         except Exception as e:
             log.error("Meta-analysis failed: %s", e)
             _meta_status[session_id] = {"status": "failed", "result": None}
-            if state is not None:
-                state.emit({"type": "meta_done", "error": str(e)})
+            if job is not None:
+                job.emit({"type": "meta_done", "error": str(e)})
 
     char_rows = await db.execute_fetchall(
         "SELECT name, current_state, traits, key_events FROM characters WHERE session_id = ?", (session_id,)
@@ -211,34 +177,34 @@ async def _save_narrative_chunk(session_id: str, chapter_id: str, directive: str
 
 
 async def _generation_pipeline(
-    state: _StreamState, chapter_id: str, directive: str, is_key_moment: bool,
+    job: Job, chapter_id: str, directive: str, is_key_moment: bool,
 ):
-    """Run the full generation in the background, emitting events to a state
+    """Run the full generation in the background, emitting events to a Job
     that can be subscribed to by multiple clients (replay + live).
 
     Critically, this task is decoupled from the HTTP request. If clients
     disconnect, this task keeps running. Only an explicit cancel
-    (via /api/llm/cancel/{call_id}) stops it.
+    (via POST /api/jobs/{id}/cancel) stops it.
     """
-    session_id = state.session_id
+    session_id = job.session_id
     try:
-        prep = await _prepare_generation(session_id, chapter_id, directive, is_key_moment, state=state)
+        prep = await _prepare_generation(session_id, chapter_id, directive, is_key_moment, job=job)
         settings = prep["settings"]
-        state.emit({"type": "prep_done", "metaRan": prep["meta_ran"]})
+        job.emit({"type": "prep_done", "metaRan": prep["meta_ran"]})
 
         # Auto-load the model if none is running and the preset declares one
         if not llm_process.is_running():
             model_path = settings.get("modelPath")
             if not model_path:
-                state.emit({"type": "error", "message": "No model is loaded and the preset has no modelPath. Load a model from the Settings page."})
+                job.emit({"type": "error", "message": "No model is loaded and the preset has no modelPath. Load a model from the Settings page."})
                 return
             from app.routers.llm_management import get_exe
             try:
                 exe = get_exe()
             except HTTPException as e:
-                state.emit({"type": "error", "message": e.detail})
+                job.emit({"type": "error", "message": e.detail})
                 return
-            state.emit({"type": "model_loading", "modelPath": model_path})
+            job.emit({"type": "model_loading", "modelPath": model_path})
             try:
                 await llm_process.start_server(
                     llama_server_exe=exe,
@@ -248,9 +214,9 @@ async def _generation_pipeline(
                     context_size=settings.get("contextSize", 65536),
                 )
             except (RuntimeError, TimeoutError) as e:
-                state.emit({"type": "error", "message": f"Failed to load model: {e}"})
+                job.emit({"type": "error", "message": f"Failed to load model: {e}"})
                 return
-            state.emit({"type": "model_loaded"})
+            job.emit({"type": "model_loaded"})
 
         result_for_save: dict | None = None
         async for ev in stream_narrative(
@@ -269,13 +235,13 @@ async def _generation_pipeline(
             if ev["type"] == "done":
                 result_for_save = ev["result"]
                 continue
-            state.emit(ev)
+            job.emit(ev)
 
         # Save chunk to DB (or skip if suggestion-only or empty)
         if not result_for_save:
             return
         if result_for_save.get("type") == "suggestion" and result_for_save.get("suggestions") and not result_for_save.get("narrative"):
-            state.emit({
+            job.emit({
                 "type": "done",
                 "kind": "suggestion",
                 "thinking": result_for_save.get("thinking", ""),
@@ -284,14 +250,14 @@ async def _generation_pipeline(
             })
             return
         if not result_for_save.get("narrative"):
-            state.emit({"type": "error", "message": "LLM returned empty narrative"})
+            job.emit({"type": "error", "message": "LLM returned empty narrative"})
             return
 
         chunk_out = await _save_narrative_chunk(
             session_id, chapter_id, directive, is_key_moment,
             result_for_save, len(prep["chunks"])
         )
-        state.emit({
+        job.emit({
             "type": "done",
             "kind": "narrative",
             "chunk": chunk_out,
@@ -301,16 +267,15 @@ async def _generation_pipeline(
         })
     except asyncio.CancelledError:
         log.info("Generation pipeline cancelled (user-requested)")
-        state.emit({"type": "error", "message": "cancelled"})
+        job.emit({"type": "error", "message": "cancelled"})
         raise
     except HTTPException as e:
-        state.emit({"type": "error", "message": e.detail})
+        job.emit({"type": "error", "message": e.detail})
     except Exception as e:
         log.exception("Generation pipeline failed")
-        state.emit({"type": "error", "message": str(e)})
-    finally:
-        state.finalize()
-        _streams.pop(session_id, None)
+        job.emit({"type": "error", "message": str(e)})
+    # No `finally` needed: job_manager._run_job_lifecycle handles
+    # status transition + finalize() + active-registry cleanup.
 
 
 async def _relay_queue_to_sse(queue: asyncio.Queue):
@@ -341,24 +306,29 @@ _SSE_HEADERS = {
 
 @router.post("/generate/stream")
 async def generate_streaming(session_id: str, body: dict):
-    """Start a new streaming generation. The pipeline runs as a detached task,
-    so client disconnects do NOT abort it — only /api/llm/cancel can. If a
-    pipeline is already in flight for this session, return 409 (use GET to
-    attach instead)."""
+    """Start a new streaming generation. The pipeline runs as a detached
+    job in the global queue (services/job_manager.py), so client disconnects
+    do NOT abort it — only POST /api/jobs/{id}/cancel can. If a narrative or
+    regenerate job is already running for this session, return 409 (use GET
+    /generate/stream to attach to it instead)."""
     directive = body.get("directive")
     chapter_id = body.get("chapterId")
     is_key_moment = body.get("isKeyMoment", False)
     if not directive:
         raise HTTPException(400, "directive is required")
-    if session_id in _streams:
+    existing = job_manager.find_active_session_job(session_id, kinds=("narrative", "regenerate"))
+    if existing is not None:
         raise HTTPException(409, "A generation is already running for this session. Use GET /generate/stream to attach.")
 
-    state = _StreamState(session_id=session_id)
-    _streams[session_id] = state
-    state.task = asyncio.create_task(_generation_pipeline(state, chapter_id, directive, is_key_moment))
+    job = job_manager.create_job(
+        kind="narrative",
+        label=f"Narrative · {directive[:60]}{'…' if len(directive) > 60 else ''}",
+        session_id=session_id,
+        runner=lambda j: _generation_pipeline(j, chapter_id, directive, is_key_moment),
+    )
 
     return StreamingResponse(
-        _relay_queue_to_sse(state.subscribe()),
+        _relay_queue_to_sse(job.subscribe()),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -459,26 +429,30 @@ async def query_streaming(session_id: str, body: dict):
 
 @router.get("/generate/stream/active")
 async def stream_active_status(session_id: str):
-    """Quick check: is there an in-flight pipeline for this session?"""
-    state = _streams.get(session_id)
-    if state is None:
+    """Quick check: is there an in-flight narrative/regenerate job for this
+    session?"""
+    job = job_manager.find_active_session_job(session_id, kinds=("narrative", "regenerate"))
+    if job is None:
         return {"running": False}
     return {
         "running": True,
-        "eventCount": len(state.events),
-        "done": state.done,
+        "jobId": job.id,
+        "kind": job.kind,
+        "eventCount": len(job.events),
+        "done": job.is_terminal(),
     }
 
 
 @router.get("/generate/stream")
 async def attach_streaming(session_id: str):
-    """Attach to an in-progress generation for this session. Replays buffered
-    events first, then forwards live ones. Returns 404 if no gen running."""
-    state = _streams.get(session_id)
-    if state is None:
+    """Attach to an in-progress narrative/regenerate job for this session.
+    Replays buffered events first, then forwards live ones. Returns 404 if
+    no gen running."""
+    job = job_manager.find_active_session_job(session_id, kinds=("narrative", "regenerate"))
+    if job is None:
         raise HTTPException(404, "No generation in progress for this session")
     return StreamingResponse(
-        _relay_queue_to_sse(state.subscribe()),
+        _relay_queue_to_sse(job.subscribe()),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -486,11 +460,11 @@ async def attach_streaming(session_id: str):
 
 # ── Regenerate (new version of an existing chunk) ───────
 
-async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
+async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
     """Background pipeline for chunk regeneration. Builds context from chunks
     BEFORE the target, streams a new narrative, then APPENDS it as a new
     version on the existing chunk."""
-    session_id = state.session_id
+    session_id = job.session_id
     try:
         db = await get_db()
 
@@ -499,7 +473,7 @@ async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
             (chunk_id, session_id),
         )
         if not chunk_row:
-            state.emit({"type": "error", "message": "Chunk not found"})
+            job.emit({"type": "error", "message": "Chunk not found"})
             return
         chapter_id, target_order, active_version_idx, versions_json = chunk_row[0]
         try:
@@ -547,21 +521,21 @@ async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
             previous_attempt=previous_attempt,
         )
 
-        state.emit({"type": "prep_done", "metaRan": False})
+        job.emit({"type": "prep_done", "metaRan": False})
 
         # Auto-load if model not running (same as gen pipeline)
         if not llm_process.is_running():
             model_path = settings.get("modelPath")
             if not model_path:
-                state.emit({"type": "error", "message": "No model is loaded and the preset has no modelPath."})
+                job.emit({"type": "error", "message": "No model is loaded and the preset has no modelPath."})
                 return
             from app.routers.llm_management import get_exe
             try:
                 exe = get_exe()
             except HTTPException as e:
-                state.emit({"type": "error", "message": e.detail})
+                job.emit({"type": "error", "message": e.detail})
                 return
-            state.emit({"type": "model_loading", "modelPath": model_path})
+            job.emit({"type": "model_loading", "modelPath": model_path})
             try:
                 await llm_process.start_server(
                     llama_server_exe=exe, model_path=model_path,
@@ -570,9 +544,9 @@ async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
                     context_size=settings.get("contextSize", 65536),
                 )
             except (RuntimeError, TimeoutError) as e:
-                state.emit({"type": "error", "message": f"Failed to load model: {e}"})
+                job.emit({"type": "error", "message": f"Failed to load model: {e}"})
                 return
-            state.emit({"type": "model_loaded"})
+            job.emit({"type": "model_loaded"})
 
         think_budget = settings.get("thinkingTokens", 1500)
         narrative_budget = settings.get("narrativeTokens", 500)
@@ -595,10 +569,10 @@ async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
             if ev["type"] == "done":
                 result_for_save = ev["result"]
                 continue
-            state.emit(ev)
+            job.emit(ev)
 
         if not result_for_save or not result_for_save.get("narrative"):
-            state.emit({"type": "error", "message": "LLM returned empty narrative"})
+            job.emit({"type": "error", "message": "LLM returned empty narrative"})
             return
 
         # Append new version to the existing chunk
@@ -623,7 +597,7 @@ async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
         await db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
         await db.commit()
 
-        state.emit({
+        job.emit({
             "type": "done",
             "kind": "narrative",
             "chunk": {"id": chunk_id, "versions": versions, "activeVersion": new_active},
@@ -633,14 +607,12 @@ async def _regen_pipeline(state: _StreamState, chunk_id: str, directive: str):
         })
     except asyncio.CancelledError:
         log.info("Regen pipeline cancelled (user-requested)")
-        state.emit({"type": "error", "message": "cancelled"})
+        job.emit({"type": "error", "message": "cancelled"})
         raise
     except Exception as e:
         log.exception("Regen pipeline failed")
-        state.emit({"type": "error", "message": str(e)})
-    finally:
-        state.finalize()
-        _streams.pop(session_id, None)
+        job.emit({"type": "error", "message": str(e)})
+    # No finally: lifecycle handled by job_manager.
 
 
 @router.post("/regenerate/stream")
@@ -652,7 +624,8 @@ async def regenerate_streaming(session_id: str, body: dict):
     new_directive = body.get("directive")
     if not chunk_id:
         raise HTTPException(400, "chunkId is required")
-    if session_id in _streams:
+    existing = job_manager.find_active_session_job(session_id, kinds=("narrative", "regenerate"))
+    if existing is not None:
         raise HTTPException(409, "A generation is already running for this session. Use GET /generate/stream to attach.")
 
     db = await get_db()
@@ -669,12 +642,15 @@ async def regenerate_streaming(session_id: str, body: dict):
     if not directive:
         raise HTTPException(400, "No directive to regenerate from")
 
-    state = _StreamState(session_id=session_id)
-    _streams[session_id] = state
-    state.task = asyncio.create_task(_regen_pipeline(state, chunk_id, directive))
+    job = job_manager.create_job(
+        kind="regenerate",
+        label=f"Regenerate · {directive[:60]}{'…' if len(directive) > 60 else ''}",
+        session_id=session_id,
+        runner=lambda j: _regen_pipeline(j, chunk_id, directive),
+    )
 
     return StreamingResponse(
-        _relay_queue_to_sse(state.subscribe()),
+        _relay_queue_to_sse(job.subscribe()),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
