@@ -367,11 +367,38 @@ async def generate_streaming(session_id: str, body: dict):
     )
 
 
+async def _query_pipeline(job: Job, messages: list[dict], settings: dict, session_id: str):
+    """Runner: stream the consultant LLM and forward every event into the
+    job's event log. Model auto-load + lock + activity tracking are all
+    handled by stream_query → run_llm_stream."""
+    try:
+        async for ev in stream_query(
+            messages,
+            temperature=settings.get("temperature"),
+            max_tokens=(settings.get("maxTokens", 4096)),
+            top_p=settings.get("topP"),
+            top_k=settings.get("topK"),
+            seed=settings.get("seed"),
+            session_id=session_id,
+            settings=settings,
+        ):
+            job.emit(ev)
+    except asyncio.CancelledError:
+        log.info("Query pipeline cancelled")
+        job.emit({"type": "error", "message": "cancelled"})
+        raise
+    except Exception as e:
+        log.exception("Query pipeline failed")
+        job.emit({"type": "error", "message": str(e)})
+
+
 @router.post("/query/stream")
 async def query_streaming(session_id: str, body: dict):
     """Ask-the-Narrator: a non-narrative analytical Q&A streamed as SSE.
     The LLM has full session context including masked intents. Body:
     {question, history?: [{question, answer}, ...]}
+
+    Runs as a background job (visible in /api/jobs and the toast bar).
     """
     question = (body.get("question") or "").strip()
     if not question:
@@ -402,12 +429,9 @@ async def query_streaming(session_id: str, body: dict):
     )
     facts = [r[0] for r in fact_rows]
 
-    # Last few chunks across all chapters in chronological order — the
-    # consultant must see the same fresh state as the narrative model would.
-    # Chunks have UUID ids, so ordering by id is lexicographic-random; we
-    # have to order by (chapter.order, chunk.order) to get true recency.
-    # Same window as the narrative on purpose: one knob, no drift between
-    # what the writer sees and what the analyst sees.
+    # Same recency window as the narrative model — one knob, no drift between
+    # what the writer sees and what the analyst sees. Chunks have UUID ids,
+    # so we order by (chapter.order, chunk.order) for true recency.
     n_recent = max(1, int(settings.get("chunkUpdateInterval", 10)))
     recent_rows = await db.execute_fetchall(
         '''SELECT c.id, c.chapter_id, c."order", c.active_version, c.versions
@@ -431,47 +455,18 @@ async def query_streaming(session_id: str, body: dict):
         history=history,
     )
 
-    # Auto-load model if needed (same as generate)
-    async def event_source():
-        yield ": stream open\n\n"
-        # Auto-load model if needed (only for llama-server)
-        if settings.get("provider", "llama-server") == "llama-server" and not llm_process.is_running():
-            model_path = settings.get("modelPath")
-            if not model_path:
-                yield _sse({"type": "error", "message": "No local model loaded and the preset has no modelPath."})
-                return
-            from app.routers.llm_management import get_exe
-            try:
-                exe = get_exe()
-            except HTTPException as e:
-                yield _sse({"type": "error", "message": e.detail})
-                return
-            yield _sse({"type": "model_loading", "modelPath": model_path})
-            try:
-                await llm_process.start_server(
-                    llama_server_exe=exe, model_path=model_path,
-                    port=settings.get("port", 8080),
-                    gpu_layers=settings.get("gpuLayers", 99),
-                    context_size=settings.get("contextSize", 65536),
-                )
-            except (RuntimeError, TimeoutError) as e:
-                yield _sse({"type": "error", "message": f"Failed to load local model: {e}"})
-                return
-            yield _sse({"type": "model_loaded"})
+    job = job_manager.create_job(
+        kind="query",
+        label=f"Ask · {question[:60]}{'…' if len(question) > 60 else ''}",
+        session_id=session_id,
+        runner=lambda j: _query_pipeline(j, messages, settings, session_id),
+    )
 
-        async for ev in stream_query(
-            messages,
-            temperature=settings.get("temperature"),
-            max_tokens=(settings.get("maxTokens", 4096)),
-            top_p=settings.get("topP"),
-            top_k=settings.get("topK"),
-            seed=settings.get("seed"),
-            session_id=session_id,
-            settings=settings,
-        ):
-            yield _sse(ev)
-
-    return StreamingResponse(event_source(), media_type="text/event-stream", headers=_SSE_HEADERS)
+    return StreamingResponse(
+        _relay_queue_to_sse(job.subscribe()),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
 
 
 @router.get("/generate/stream/active")

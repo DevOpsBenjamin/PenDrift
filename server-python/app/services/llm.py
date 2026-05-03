@@ -42,21 +42,6 @@ from app.services.providers import get_provider
 log = logging.getLogger("pendrift.llm")
 
 
-# ── Serialisation ────────────────────────────────────────
-# asyncio.Lock is NOT reentrant. The runners below own it; callers must
-# NOT take it themselves on top of a runner call. (`services/job_manager.py`
-# enforces an outer job-level queue too — both layers nest cleanly because
-# job_manager hands off to the runner once and never re-acquires.)
-_queue: asyncio.Lock | None = None
-
-
-def _get_lock() -> asyncio.Lock:
-    global _queue
-    if _queue is None:
-        _queue = asyncio.Lock()
-    return _queue
-
-
 # ── Body builder ─────────────────────────────────────────
 def _build_body(messages: list[dict], **kwargs) -> dict:
     """Build an OpenAI-compatible chat completion body. Includes only the
@@ -88,18 +73,30 @@ def _provider_from_settings(settings: dict | None) -> tuple[str, dict]:
     return name, config
 
 
-async def _ensure_provider_ready(settings: dict | None) -> None:
+async def _ensure_provider_ready(
+    settings: dict | None,
+    *,
+    on_event=None,
+) -> None:
     """Auto-start llama-server if the preset targets it and it's not up.
-    No-op for external providers (xai, openai, ...)."""
+    No-op for external providers (xai, openai, ...).
+
+    If `on_event` is provided, emits `{"type": "model_loading", "modelPath"}`
+    before starting and `{"type": "model_loaded"}` after — the SSE consumer
+    sees the loading state instead of a silent multi-second freeze."""
     name, _ = _provider_from_settings(settings)
     if name != "llama-server":
         return
     if llm_process.is_running():
         return
+    if on_event is not None:
+        on_event({"type": "model_loading", "modelPath": (settings or {}).get("modelPath")})
     try:
         await llm_process.ensure_loaded(settings or {})
     except (RuntimeError, TimeoutError) as e:
         raise RuntimeError(f"Could not start llama-server: {e}") from e
+    if on_event is not None:
+        on_event({"type": "model_loaded"})
 
 
 # ── Provider-agnostic SSE primitive (low-level) ──────────
@@ -133,16 +130,29 @@ async def run_llm_stream(
     """End-to-end LLM call as an event stream.
 
     Yields, in order:
+      - (optional) {"type": "model_loading", "modelPath": str}
+      - (optional) {"type": "model_loaded"}
       - {"type": "started", "callId": str}
       - all events from `sse_completion` (delta, model, usage, first_token)
       - {"type": "llm_done", "stats": dict, "modelName": str, "raw": str}
+
+    The model_loading/model_loaded pair only appears when the local
+    llama-server provider is configured and the daemon needed to be
+    auto-started — gives the UI something to show during a multi-second
+    cold start.
 
     Raises CancelledError / Exception unchanged after marking the activity
     call cancelled / errored. Callers can wrap to handle "save partial on
     cancel" flows.
     """
     provider_name, provider_config = _provider_from_settings(settings)
-    await _ensure_provider_ready(settings)
+
+    # Pre-flight events (model load) happen BEFORE the inference lock so
+    # the user sees "model loading" rather than a silent freeze.
+    pre_events: list[dict] = []
+    await _ensure_provider_ready(settings, on_event=pre_events.append)
+    for pev in pre_events:
+        yield pev
 
     body = _build_body(messages, **sampling)
     call = llm_activity.register(kind, session_id)
@@ -154,24 +164,28 @@ async def run_llm_stream(
     start = time.monotonic()
 
     try:
-        async with _get_lock():
-            llm_activity.mark_running(call)
-            yield {"type": "started", "callId": call.id}
+        # No local lock here: every entry point is wrapped in a job by
+        # services/job_manager.py, which already serialises across all
+        # kinds. (For external providers like xAI / OpenAI the concept of
+        # a serialisation lock is a non-sequitur anyway — they handle
+        # concurrency on their side.)
+        llm_activity.mark_running(call)
+        yield {"type": "started", "callId": call.id}
 
-            async for ev in sse_completion(
-                body,
-                provider_name=provider_name,
-                provider_kwargs=provider_config,
-                activity_call=call,
-                kind=kind,
-            ):
-                if ev["type"] == "delta":
-                    full.append(ev["text"])
-                elif ev["type"] == "model":
-                    model_name = ev["name"]
-                elif ev["type"] == "usage":
-                    usage = ev["data"]
-                yield ev
+        async for ev in sse_completion(
+            body,
+            provider_name=provider_name,
+            provider_kwargs=provider_config,
+            activity_call=call,
+            kind=kind,
+        ):
+            if ev["type"] == "delta":
+                full.append(ev["text"])
+            elif ev["type"] == "model":
+                model_name = ev["name"]
+            elif ev["type"] == "usage":
+                usage = ev["data"]
+            yield ev
 
         duration_ms = int((time.monotonic() - start) * 1000)
         raw = "".join(full)
