@@ -193,11 +193,11 @@ async def _generation_pipeline(
         settings = prep["settings"]
         job.emit({"type": "prep_done", "metaRan": prep["meta_ran"]})
 
-        # Auto-load the model if none is running and the preset declares one
-        if not llm_process.is_running():
+        # Auto-load the model ONLY if provider is llama-server and none is running
+        if settings.get("provider", "llama-server") == "llama-server" and not llm_process.is_running():
             model_path = settings.get("modelPath")
             if not model_path:
-                job.emit({"type": "error", "message": "No model is loaded and the preset has no modelPath. Load a model from the Settings page."})
+                job.emit({"type": "error", "message": "No local model is loaded and the preset has no modelPath. Load a model from the Settings page or switch to a cloud provider."})
                 return
             from app.routers.llm_management import get_exe
             try:
@@ -215,7 +215,7 @@ async def _generation_pipeline(
                     context_size=settings.get("contextSize", 65536),
                 )
             except (RuntimeError, TimeoutError) as e:
-                job.emit({"type": "error", "message": f"Failed to load model: {e}"})
+                job.emit({"type": "error", "message": f"Failed to load local model: {e}"})
                 return
             job.emit({"type": "model_loaded"})
 
@@ -430,10 +430,11 @@ async def query_streaming(session_id: str, body: dict):
     # Auto-load model if needed (same as generate)
     async def event_source():
         yield ": stream open\n\n"
-        if not llm_process.is_running():
+        # Auto-load model if needed (only for llama-server)
+        if settings.get("provider", "llama-server") == "llama-server" and not llm_process.is_running():
             model_path = settings.get("modelPath")
             if not model_path:
-                yield _sse({"type": "error", "message": "No model loaded and the preset has no modelPath."})
+                yield _sse({"type": "error", "message": "No local model loaded and the preset has no modelPath."})
                 return
             from app.routers.llm_management import get_exe
             try:
@@ -450,7 +451,7 @@ async def query_streaming(session_id: str, body: dict):
                     context_size=settings.get("contextSize", 65536),
                 )
             except (RuntimeError, TimeoutError) as e:
-                yield _sse({"type": "error", "message": f"Failed to load model: {e}"})
+                yield _sse({"type": "error", "message": f"Failed to load local model: {e}"})
                 return
             yield _sse({"type": "model_loaded"})
 
@@ -566,11 +567,11 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
 
         job.emit({"type": "prep_done", "metaRan": False})
 
-        # Auto-load if model not running (same as gen pipeline)
-        if not llm_process.is_running():
+        # Auto-load if model not running (only for llama-server)
+        if settings.get("provider", "llama-server") == "llama-server" and not llm_process.is_running():
             model_path = settings.get("modelPath")
             if not model_path:
-                job.emit({"type": "error", "message": "No model is loaded and the preset has no modelPath."})
+                job.emit({"type": "error", "message": "No local model is loaded and the preset has no modelPath."})
                 return
             from app.routers.llm_management import get_exe
             try:
@@ -587,7 +588,7 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
                     context_size=settings.get("contextSize", 65536),
                 )
             except (RuntimeError, TimeoutError) as e:
-                job.emit({"type": "error", "message": f"Failed to load model: {e}"})
+                job.emit({"type": "error", "message": f"Failed to load local model: {e}"})
                 return
             job.emit({"type": "model_loaded"})
 
