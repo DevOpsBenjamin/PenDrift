@@ -61,8 +61,19 @@ async def list_provider_models(provider: str, base_url: str):
             r = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
             r.raise_for_status()
             data = r.json()
-            models = [m["id"] for m in data.get("data", []) if "id" in m]
-            return {"models": models}
+            
+            models = []
+            # Standard OpenAI format: {"data": [{"id": "model-1"}, ...]}
+            if "data" in data and isinstance(data["data"], list):
+                models = [m["id"] for m in data["data"] if isinstance(m, dict) and "id" in m]
+            # xAI style or other variations: {"models": ["model-1", ...]}
+            elif "models" in data and isinstance(data["models"], list):
+                models = [m if isinstance(m, str) else m.get("id") for m in data["models"] if m]
+            # Fallback if the top-level is just a list
+            elif isinstance(data, list):
+                models = [m if isinstance(m, str) else m.get("id") for m in data if m]
+
+            return {"models": sorted(list(set(models)))}
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch models: {e}")
 
