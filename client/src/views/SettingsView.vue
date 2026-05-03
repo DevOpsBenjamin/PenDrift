@@ -104,6 +104,38 @@
 
       <!-- Editor -->
       <div v-if="editing" class="flex-1 flex flex-col gap-4">
+        <!-- Action bar (sticky at top of editor) -->
+        <div class="flex justify-between items-center gap-3 pb-3 border-b border-border-subtle">
+          <div class="flex gap-2">
+            <button
+              v-if="!isNew && editing.id !== 'default'"
+              class="px-4 py-2 border border-error/30 rounded-lg text-error text-sm
+                     hover:bg-error/10 transition-all cursor-pointer"
+              @click="remove(editing.id)"
+            >Delete</button>
+            <button
+              v-if="!isNew && !editing.isDefault"
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
+              @click="setAsDefault"
+              title="Mark this preset as the default for Import, Rerun, Enrich"
+            >★ Set as default</button>
+            <span v-if="!isNew && editing.isDefault" class="self-center text-xs text-accent">★ Default preset</span>
+          </div>
+          <div class="flex gap-3">
+            <button
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
+              @click="editing = null"
+            >Cancel</button>
+            <button
+              class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
+                     hover:bg-accent-hover transition-colors cursor-pointer active:scale-95"
+              @click="save"
+            >Save</button>
+          </div>
+        </div>
+
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="flex flex-col gap-1.5">
             <label class="text-xs text-text-muted font-medium uppercase tracking-wider">ID</label>
@@ -358,36 +390,6 @@
           ></textarea>
         </div>
 
-        <div class="flex justify-between pt-2">
-          <div class="flex gap-2">
-            <button
-              v-if="!isNew && editing.id !== 'default'"
-              class="px-4 py-2 border border-error/30 rounded-lg text-error text-sm
-                     hover:bg-error/10 transition-all cursor-pointer"
-              @click="remove(editing.id)"
-            >Delete</button>
-            <button
-              v-if="!isNew && !editing.isDefault"
-              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
-                     hover:border-accent/40 hover:text-accent transition-all cursor-pointer"
-              @click="setAsDefault"
-              title="Mark this preset as the default for Import, Rerun, Enrich"
-            >★ Set as default</button>
-            <span v-if="!isNew && editing.isDefault" class="self-center text-xs text-accent">★ Default preset</span>
-          </div>
-          <div class="flex gap-3">
-            <button
-              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
-                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
-              @click="editing = null"
-            >Cancel</button>
-            <button
-              class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
-                     hover:bg-accent-hover transition-colors cursor-pointer active:scale-95"
-              @click="save"
-            >Save</button>
-          </div>
-        </div>
       </div>
 
       <div v-else class="flex-1 flex items-center justify-center text-text-muted italic text-sm py-20">
