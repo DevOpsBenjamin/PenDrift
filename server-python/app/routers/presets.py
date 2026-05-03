@@ -177,15 +177,25 @@ async def make_default_preset(preset_id: str):
 
 
 def find_default_preset_id() -> str:
-    """Return the id of the preset flagged isDefault=True, or 'default' if
-    none flagged. ONLY checks user presets for the flag."""
-    # Check user presets for the flag
-    if USER_SETTINGS_PATH.is_dir():
-        for f in USER_SETTINGS_PATH.glob("*.json"):
-            data = _read(f, allow_default_flag=True)
-            if data and data.get("isDefault"):
-                return data.get("id") or f.stem
+    """Return the id of the preset flagged isDefault=True. If multiple files
+    on disk have the flag (which can happen after seeding from `defaults/`
+    or after a partial cleanup), return the LAST one in sorted order to
+    match `list_presets()`'s in-memory resolution, AND strip the flag from
+    the earlier ones so the on-disk state agrees with the UI on the next
+    read. Falls back to 'default' if none flagged."""
+    if not USER_SETTINGS_PATH.is_dir():
+        return "default"
 
-    # We NO LONGER check defaults here, because we want the user to have 
-    # full control over what is considered the default via their data folder.
-    return "default"
+    flagged: list[str] = []
+    for f in sorted(USER_SETTINGS_PATH.glob("*.json")):
+        data = _read(f, allow_default_flag=True)
+        if data and data.get("isDefault"):
+            flagged.append(data.get("id") or f.stem)
+
+    if not flagged:
+        return "default"
+    # All but the last are stale — clean them on disk so disk state matches
+    # what the UI shows (last sorted with isDefault wins).
+    for stale_id in flagged[:-1]:
+        _cleanup_is_default(stale_id)
+    return flagged[-1]
