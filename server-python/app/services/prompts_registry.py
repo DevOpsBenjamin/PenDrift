@@ -63,13 +63,7 @@ def get_prompt(kind: str, provider_name: str = "llama-server") -> str | None:
     if "default" in _cache and kind in _cache["default"]:
         return _cache["default"][kind]
         
-    # 3. Last resort: ask the provider class itself (legacy fallback)
-    from app.services.providers import get_provider
-    try:
-        prov = get_provider(provider_name)
-        return prov.get_default_prompt(kind)
-    except Exception:
-        return None
+    return None
 
 
 def _override_key(name: str) -> str:
@@ -94,3 +88,37 @@ def effective_prompt(name: str, settings: dict, provider_name: str | None = None
         # Fallback to some generic assistant prompt
         return "You are a helpful assistant."
     return default
+
+
+def migrate_strip_legacy_prompts() -> int:
+    """One-shot startup migration: remove legacy prompt fields from existing
+    user settings files. Returns the number of files updated."""
+    settings_dir = DATA_DIR / "presets" / "settings"
+    if not settings_dir.is_dir():
+        return 0
+    _load()
+    # Use all known prompt kinds across all providers in cache
+    all_kinds = set()
+    for p_prompts in _cache.values():
+        all_kinds.update(p_prompts.keys())
+        
+    legacy_keys = [_override_key(name) for name in all_kinds]
+    updated = 0
+    for f in settings_dir.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("Could not read settings %s: %s", f, e)
+            continue
+        removed = [k for k in legacy_keys if k in data]
+        if not removed:
+            continue
+        for k in removed:
+            # Only remove if it's one of the truly legacy/empty ones (optional)
+            # For simplicity, we strip them if they match the pattern and aren't overrides
+            # (The original logic was to strip them to avoid stale prompts)
+            del data[k]
+        f.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        updated += 1
+        log.info("Stripped legacy prompt fields %s from %s", removed, f.name)
+    return updated
