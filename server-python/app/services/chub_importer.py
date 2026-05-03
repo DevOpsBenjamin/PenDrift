@@ -137,6 +137,22 @@ def _build_conversion_input(card: dict) -> str:
     return "\n".join(parts)
 
 
+def _resolve_template_max_tokens(settings: dict, explicit: int | None) -> int:
+    """Pick max_tokens for a template-shaped flow (chub_import / enrich /
+    rerun). Caller's explicit value wins; otherwise the preset's `maxTokens`;
+    otherwise 4096 as the conservative local-model default.
+
+    Templates routinely need 6-10k output tokens once thinking + full body
+    are accounted for, so external providers like Grok should be configured
+    with a generous `maxTokens` (16k+) in their preset."""
+    if explicit is not None:
+        return explicit
+    val = settings.get("maxTokens")
+    if isinstance(val, int) and val > 0:
+        return val
+    return 4096
+
+
 async def _llm_template_call(
     messages: list[dict],
     settings: dict,
@@ -144,7 +160,7 @@ async def _llm_template_call(
     kind: str,
     job: Job | None = None,
     temperature: float = 0.4,
-    max_tokens: int = 4096,
+    max_tokens: int | None = None,
 ) -> dict:
     """Shared LLM call for any chub_import-shaped operation (import, rerun,
     enrich). Returns the parsed template body — `thinking` is preserved on
@@ -153,13 +169,14 @@ async def _llm_template_call(
 
     Forwards LLM events to `job` (when provided) so the toast bar / Activity
     view see live token streaming."""
+    resolved_max_tokens = _resolve_template_max_tokens(settings, max_tokens)
     result = await run_llm_buffered(
         messages,
         settings=settings,
         kind=kind,
         job=job,
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=resolved_max_tokens,
     )
     raw = result["raw"]
     try:
@@ -179,7 +196,7 @@ async def convert_card_to_template(
     *,
     job: Job | None = None,
     temperature: float = 0.4,
-    max_tokens: int = 4096,
+    max_tokens: int | None = None,
 ) -> dict:
     """Convert a character card into a PenDrift template (fresh import).
 
@@ -207,7 +224,7 @@ async def enrich_with_new_card(
     *,
     job: Job | None = None,
     temperature: float = 0.4,
-    max_tokens: int = 4096,
+    max_tokens: int | None = None,
 ) -> dict:
     """Merge a NEW card (different character from the same shared universe)
     into the existing template. Used to grow a multi-character template from
@@ -248,7 +265,7 @@ async def rerun_with_current(
     *,
     job: Job | None = None,
     temperature: float = 0.4,
-    max_tokens: int = 4096,
+    max_tokens: int | None = None,
 ) -> dict:
     """Re-analyze a card against the CURRENT template to fix/fill/correct.
 

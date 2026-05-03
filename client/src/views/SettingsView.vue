@@ -273,34 +273,41 @@
 
         <!-- Token Budget -->
         <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Token Budget</h3>
+        <div class="text-xs text-text-muted -mb-1 leading-relaxed">
+          The first three caps apply ONLY to narrative generation (per-chunk) and sum to the narrative budget.
+          <br />
+          <span class="text-text-secondary">Max Tokens</span> is a separate ceiling used by meta (×2), templates (chub-import / enrich / rerun), and Ask-the-Narrator. Bump it high for cloud models like Grok — local models like Qwen may struggle past 4096.
+        </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted">Thinking</label>
+            <label class="text-xs text-text-muted" title="Per-chunk thinking budget for narrative generation only">Thinking <span class="text-text-muted/60">(narrative)</span></label>
             <input v-model.number="editing.thinkingTokens" type="number" step="100" min="0"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted">Narrative</label>
+            <label class="text-xs text-text-muted" title="Per-chunk narrative prose budget">Narrative</label>
             <input v-model.number="editing.narrativeTokens" type="number" step="100" min="100"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted">Suggestions</label>
+            <label class="text-xs text-text-muted" title="Per-chunk suggestions budget">Suggestions</label>
             <input v-model.number="editing.suggestionTokens" type="number" step="50" min="0"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted">Max Tokens (meta)</label>
+            <label class="text-xs text-text-muted" title="Ceiling for meta (×2), templates (chub-import / enrich / rerun) and Ask-the-Narrator. Independent from the narrative budgets above.">Max Tokens <span class="text-text-muted/60">(meta / templates / query)</span></label>
             <input v-model.number="editing.maxTokens" type="number" step="256" min="256"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
         </div>
         <p class="text-xs text-text-muted -mt-2">
-          Total generation budget: {{ (editing.thinkingTokens || 0) + (editing.narrativeTokens || 0) + (editing.suggestionTokens || 0) }} tokens
+          Narrative chunk budget: {{ (editing.thinkingTokens || 0) + (editing.narrativeTokens || 0) + (editing.suggestionTokens || 0) }} tokens
+          (<span class="font-mono">{{ editing.thinkingTokens || 0 }} + {{ editing.narrativeTokens || 0 }} + {{ editing.suggestionTokens || 0 }}</span>).
+          Meta / template / query calls use Max Tokens directly (or ×2 for meta).
         </p>
 
         <div class="flex flex-col gap-1.5">
