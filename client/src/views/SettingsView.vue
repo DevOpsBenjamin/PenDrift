@@ -273,41 +273,44 @@
 
         <!-- Token Budget -->
         <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Token Budget</h3>
-        <div class="text-xs text-text-muted -mb-1 leading-relaxed">
-          The first three caps apply ONLY to narrative generation (per-chunk) and sum to the narrative budget.
+        <!-- Token Budget -->
+        <div class="text-xs text-text-muted leading-relaxed">
+          The three "narrative" caps below are <strong class="text-text-secondary">summed and sent as a single hard cap</strong> to the model on each narrative chunk — the LLM self-balances across thinking / narrative / suggestions but stops at the total. They do NOT apply individually.
           <br />
-          <span class="text-text-secondary">Max Tokens</span> is a separate ceiling used by meta (×2), templates (chub-import / enrich / rerun), and Ask-the-Narrator. Bump it high for cloud models like Grok — local models like Qwen may struggle past 4096.
+          <strong class="text-text-secondary">Max Tokens</strong> is a separate ceiling used by meta (×2), templates (chub-import / enrich / rerun), and Ask-the-Narrator. Bump it high for cloud models like Grok; keep it modest (~4096) for local Qwen.
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted" title="Per-chunk thinking budget for narrative generation only">Thinking <span class="text-text-muted/60">(narrative)</span></label>
+            <label class="text-xs text-text-muted" title="Narrative-chunk thinking budget. Summed with Narrative + Suggestions to form the per-chunk hard cap.">Thinking</label>
             <input v-model.number="editing.thinkingTokens" type="number" step="100" min="0"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted" title="Per-chunk narrative prose budget">Narrative</label>
+            <label class="text-xs text-text-muted" title="Narrative-chunk prose budget. Summed with Thinking + Suggestions.">Narrative</label>
             <input v-model.number="editing.narrativeTokens" type="number" step="100" min="100"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted" title="Per-chunk suggestions budget">Suggestions</label>
+            <label class="text-xs text-text-muted" title="Narrative-chunk suggestions budget. Summed with Thinking + Narrative.">Suggestions</label>
             <input v-model.number="editing.suggestionTokens" type="number" step="50" min="0"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs text-text-muted" title="Ceiling for meta (×2), templates (chub-import / enrich / rerun) and Ask-the-Narrator. Independent from the narrative budgets above.">Max Tokens <span class="text-text-muted/60">(meta / templates / query)</span></label>
+            <label class="text-xs text-text-muted" title="Ceiling for meta (×2), templates (chub-import / enrich / rerun) and Ask-the-Narrator. Independent from the three narrative caps.">Max Tokens</label>
             <input v-model.number="editing.maxTokens" type="number" step="256" min="256"
               class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm
                      focus:outline-none focus:border-accent transition-colors" />
           </div>
         </div>
-        <p class="text-xs text-text-muted -mt-2">
-          Narrative chunk budget: {{ (editing.thinkingTokens || 0) + (editing.narrativeTokens || 0) + (editing.suggestionTokens || 0) }} tokens
+        <p class="text-xs text-text-muted">
+          Narrative chunk hard cap:
+          <span class="font-mono text-text-secondary">{{ (editing.thinkingTokens || 0) + (editing.narrativeTokens || 0) + (editing.suggestionTokens || 0) }}</span>
+          tokens
           (<span class="font-mono">{{ editing.thinkingTokens || 0 }} + {{ editing.narrativeTokens || 0 }} + {{ editing.suggestionTokens || 0 }}</span>).
-          Meta / template / query calls use Max Tokens directly (or ×2 for meta).
+          Output gets cut off at this number — bump if your chunks feel truncated.
         </p>
 
         <div class="flex flex-col gap-1.5">
