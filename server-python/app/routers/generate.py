@@ -169,6 +169,7 @@ async def _save_narrative_chunk(session_id: str, chapter_id: str, directive: str
     )
     await db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
     await db.commit()
+    log.info("[narrative] saved chunk %s (order=%d) for session %s", chunk_id[:8], order, session_id[:8])
     return {
         "id": chunk_id, "sessionId": session_id, "chapterId": chapter_id,
         "order": order, "activeVersion": 0,
@@ -641,6 +642,7 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
         )
         await db.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id))
         await db.commit()
+        log.info("[regenerate] appended version %d on chunk %s (session %s)", new_active, chunk_id[:8], session_id[:8])
 
         job.emit({
             "type": "done",

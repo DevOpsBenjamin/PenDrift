@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException
 
@@ -10,6 +11,7 @@ from app.services import template_store, llm_process, job_manager
 from app.services.job_manager import Job
 from app.config import DATA_DIR
 
+log = logging.getLogger("pendrift.import_chub")
 router = APIRouter()
 
 
@@ -48,7 +50,9 @@ async def _import_runner(job: Job, card: dict, settings: dict, url: str | None) 
             raise RuntimeError(f"llama-server failed to start: {e}")
 
     job.emit({"type": "phase", "name": "convert"})
+    log.info("[chub-import job %s] starting LLM conversion", job.id[:8])
     template = await convert_card_to_template(card, settings, job=job)
+    log.info("[chub-import job %s] LLM returned template id=%s, saving folder", job.id[:8], template.get("id"))
 
     job.emit({"type": "phase", "name": "save"})
     try:
@@ -58,6 +62,7 @@ async def _import_runner(job: Job, card: dict, settings: dict, url: str | None) 
         )
     except ValueError as e:
         raise ValueError(str(e))
+    log.info("[chub-import job %s] template %s saved as version 0001", job.id[:8], template["id"])
 
     avatar = await download_card_avatar(card)
     if avatar:
@@ -66,6 +71,7 @@ async def _import_runner(job: Job, card: dict, settings: dict, url: str | None) 
             filename = template_store.write_image(template["id"], content, ext)
             template["coverImage"] = filename
             template_store.save_in_place(template["id"], template)
+            log.info("[chub-import job %s] avatar saved as %s", job.id[:8], filename)
         except (ValueError, OSError):
             pass
 

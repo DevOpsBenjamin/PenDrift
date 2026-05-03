@@ -175,9 +175,21 @@ def mark_done(
     else:
         call.status = "success"
     if raw_response:
-        # Pass raw_response as argument to avoid closure issues if needed
+        # Pre-compute the dump filename SYNC so call.dump_file is set before
+        # asdict() snapshots it for the history. The actual file write is
+        # offloaded to a thread to keep the event loop free.
+        started = call.started_at or now
+        ts = datetime.fromtimestamp(started).strftime("%Y%m%d-%H%M%S")
+        filename = f"{ts}-{call.kind}-{call.id[:8]}.txt"
+        call.dump_file = filename
+
         def _save_res():
-            call.dump_file = _dump_response(call, raw_response)
+            try:
+                _DUMP_DIR.mkdir(parents=True, exist_ok=True)
+                path = _DUMP_DIR / filename
+                path.write_text(raw_response, encoding="utf-8")
+            except OSError as e:
+                log.warning("Failed to dump LLM response for call %s: %s", call.id, e)
         asyncio.get_event_loop().run_in_executor(None, _save_res)
     entry = asdict(call)
     _history.appendleft(entry)
@@ -186,11 +198,12 @@ def mark_done(
     _tasks.pop(call.id, None)
 
 
+# Kept for back-compat if anyone external imports it; the inline path above
+# is the canonical one.
 def _dump_response(call: LlmCall, raw: str) -> str | None:
-    """Persist the raw LLM response to disk. Returns the filename (relative)."""
     try:
         _DUMP_DIR.mkdir(parents=True, exist_ok=True)
-        ts = datetime.fromtimestamp(call.started_at).strftime("%Y%m%d-%H%M%S")
+        ts = datetime.fromtimestamp(call.started_at or time.time()).strftime("%Y%m%d-%H%M%S")
         filename = f"{ts}-{call.kind}-{call.id[:8]}.txt"
         path = _DUMP_DIR / filename
         path.write_text(raw, encoding="utf-8")

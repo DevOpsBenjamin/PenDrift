@@ -292,13 +292,17 @@ async def _template_op_runner(
         job.emit({"type": "model_loaded"})
 
     job.emit({"type": "started", "action": action})
+    log.info("[%s job %s] starting LLM call against %s", action, job.id[:8], template_id)
 
     new_body = await llm_fn(card, current, settings, job=job)
+    log.info("[%s job %s] LLM returned, parsing + saving new version", action, job.id[:8])
+
     if current.get("coverImage"):
         new_body["coverImage"] = current["coverImage"]
     saved, new_version = template_store.add_version(
         template_id, new_body, action=action, source_ref=source_filename,
     )
+    log.info("[%s job %s] saved %s as version %s", action, job.id[:8], template_id, new_version)
 
     job.set_result({
         "template": saved,
