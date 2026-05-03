@@ -16,10 +16,12 @@ from __future__ import annotations
 from app.services.providers.base import LLMProvider
 from app.services.providers.llama_server import LlamaServerProvider
 from app.services.providers.openai_compatible import OpenAICompatibleProvider
+from app.services.providers.xai import XAIProvider
 
 _PROVIDERS: dict[str, type[LLMProvider]] = {
     "llama-server": LlamaServerProvider,
     "openai": OpenAICompatibleProvider,
+    "xai": XAIProvider,
     # Future:
     # "anthropic": AnthropicProvider,
     # "openrouter": OpenRouterProvider,

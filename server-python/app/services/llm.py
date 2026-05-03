@@ -38,7 +38,8 @@ log = logging.getLogger("pendrift.llm")
 # Today: hardcoded to llama-server. To wire from settings later, replace
 # this with `get_provider(settings.get("provider", "llama-server"), **cfg)`
 # at each call site (or thread `provider_name` through the helpers below).
-_DEFAULT_PROVIDER = "llama-server"
+import os
+_DEFAULT_PROVIDER = os.environ.get("LLM_PROVIDER", "llama-server")
 
 # ── Serialization queue ─────────────────────────────────
 # Only one LLM call hits llama-server at a time. Lazy-init so module import
