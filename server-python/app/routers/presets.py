@@ -22,7 +22,7 @@ def _ensure_dir():
     USER_SETTINGS_PATH.mkdir(parents=True, exist_ok=True)
 
 
-def _read(path: Path) -> dict | None:
+def _read(path: Path, allow_default_flag: bool = True) -> dict | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -30,6 +30,11 @@ def _read(path: Path) -> dict | None:
         # Ensure the preset has an ID based on its filename if missing
         if "id" not in data:
             data["id"] = path.stem
+        
+        # Strip isDefault if we're reading from a source that shouldn't define the global default
+        if not allow_default_flag:
+            data.pop("isDefault", None)
+            
         return data
     except (json.JSONDecodeError, OSError):
         return None
@@ -40,17 +45,17 @@ async def list_presets():
     _ensure_dir()
     presets = {}
 
-    # 1. Load built-in defaults
+    # 1. Load built-in defaults (ignore any isDefault flag there)
     if DEFAULT_SETTINGS_PATH.is_dir():
         for f in DEFAULT_SETTINGS_PATH.glob("*.json"):
-            data = _read(f)
+            data = _read(f, allow_default_flag=False)
             if data:
                 presets[data["id"]] = data
 
-    # 2. Load user presets (overwriting defaults if same ID)
+    # 2. Load user presets (allow isDefault flag here)
     if USER_SETTINGS_PATH.is_dir():
         for f in USER_SETTINGS_PATH.glob("*.json"):
-            data = _read(f)
+            data = _read(f, allow_default_flag=True)
             if data:
                 presets[data["id"]] = data
 
@@ -60,14 +65,16 @@ async def list_presets():
 @router.get("/{preset_id}")
 async def get_preset(preset_id: str):
     # Try user first, then default
-    path = USER_SETTINGS_PATH / f"{preset_id}.json"
-    if not path.is_file():
-        path = DEFAULT_SETTINGS_PATH / f"{preset_id}.json"
+    user_path = USER_SETTINGS_PATH / f"{preset_id}.json"
+    if user_path.is_file():
+        data = _read(user_path, allow_default_flag=True)
+    else:
+        default_path = DEFAULT_SETTINGS_PATH / f"{preset_id}.json"
+        if default_path.is_file():
+            data = _read(default_path, allow_default_flag=False)
+        else:
+            raise HTTPException(404, f"Preset '{preset_id}' not found")
 
-    if not path.is_file():
-        raise HTTPException(404, f"Preset '{preset_id}' not found")
-
-    data = _read(path)
     if data is None:
         raise HTTPException(500, f"Failed to read preset '{preset_id}'")
     return data
@@ -131,14 +138,15 @@ async def make_default_preset(preset_id: str):
         if pid == preset_id:
             # Load from where it exists
             src_path = user_file if user_file.is_file() else (DEFAULT_SETTINGS_PATH / f"{pid}.json")
-            data = _read(src_path)
+            # When forcing a new default, we read it then force-apply the flag
+            data = _read(src_path, allow_default_flag=True)
             if data:
                 data["isDefault"] = True
                 user_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         else:
             # If it's NOT the target, if it exists in USER path and has the flag, remove it
             if user_file.is_file():
-                data = _read(user_file)
+                data = _read(user_file, allow_default_flag=True)
                 if data and data.get("isDefault"):
                     data.pop("isDefault", None)
                     user_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -148,19 +156,14 @@ async def make_default_preset(preset_id: str):
 
 def find_default_preset_id() -> str:
     """Return the id of the preset flagged isDefault=True, or 'default' if
-    none flagged. Checks user presets first, then defaults."""
+    none flagged. ONLY checks user presets for the flag."""
     # Check user presets for the flag
     if USER_SETTINGS_PATH.is_dir():
         for f in USER_SETTINGS_PATH.glob("*.json"):
-            data = _read(f)
+            data = _read(f, allow_default_flag=True)
             if data and data.get("isDefault"):
                 return data.get("id") or f.stem
 
-    # Check defaults as a fallback (though typically they don't have isDefault=True)
-    if DEFAULT_SETTINGS_PATH.is_dir():
-        for f in DEFAULT_SETTINGS_PATH.glob("*.json"):
-            data = _read(f)
-            if data and data.get("isDefault"):
-                return data.get("id") or f.stem
-
+    # We NO LONGER check defaults here, because we want the user to have 
+    # full control over what is considered the default via their data folder.
     return "default"
