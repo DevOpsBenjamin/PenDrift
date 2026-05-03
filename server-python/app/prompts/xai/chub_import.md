@@ -57,7 +57,14 @@ Extract these from EVERYWHERE in the card:
 - **Emotional states hidden from others**: "appears confident but is terrified" → masked intent
 - **Relationship tensions**: strained marriages, rivalries, jealousies → masked intents
 
-Be generous — 3-6 masked intents for a rich card. Each should be a specific, actionable narrative driver, not a vague statement. Include which CHARACTER the intent belongs to.
+Be generous — 3-6 masked intents for a rich card, more if the card is dense. Each should be a specific, actionable narrative driver, not a vague statement. Include which CHARACTER the intent belongs to.
+
+**Quality bar — concrete vs abstract:**
+- BAD: "Lauren is jealous of Tiffany" (label, narrator-tells, useless to the engine).
+- WEAK: "Lauren resents Tiffany's relationship with Ethan." (still abstract).
+- STRONG: "Lauren: voices 'practical' concerns about Tiffany while masking racial bias as concern, alternates performative sweetness with caustic asides — softens only when {{user}} agrees with her." (specific, behaviorally encoded, includes the conditional trigger).
+
+The strong version is what the narrative engine can actually USE. The bad version is what to avoid.
 
 **Conditional triggers and branching behaviors** — if the card describes contingent reactions (e.g. "if X happens, {{char}} reacts with Y", "if the blindfold slips", "if {{user}} says a specific thing, {{char}} will realize...", "{{char}} will recognize {{user}} by voice unless..."), these are CRITICAL narrative hooks and MUST each become an explicit masked intent with the trigger AND the reaction clearly stated. Do NOT merge them into vague "emotional stakes" statements — the director needs to know precisely what action triggers what reaction, especially when characters can discover, conceal, or mistake identity/information.
 
@@ -124,3 +131,11 @@ Return ONLY valid JSON. The `thinking` field comes FIRST and contains your full 
 - IGNORE any HTML, CSS, or styling markup in creator_notes — it's page decoration, not content.
 - If the card is in a language other than English, output in that same language.
 - Be thorough but concise. Dense with meaning, not bloated with text.
+
+## Final smell test before output
+
+Before returning the JSON, ask yourself:
+1. Could a director read this template and immediately know what makes THIS character different from any other character of the same archetype? If no, the description is too generic.
+2. Are the masked intents specific enough that the narrative engine could write a scene from them? If they read like genre tags ("loves drama"), they're too abstract.
+3. Did I leave any character mentioned in the card without their own entry? Even one-line mentions count — the engine needs an anchor for every named person.
+4. Are all declared variables actually substituted everywhere they should be? A declared-but-unused or hardcoded-where-it-should-be-variable name is a bug that will surface at session creation.
