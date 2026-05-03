@@ -291,10 +291,16 @@ def add_version(
 
 
 def restore_version(template_id: str, version: str) -> tuple[dict, str]:
-    """Copy `version` to a new latest version with action='restore-from-X'."""
+    """Copy `version` to a new latest version with action='restore-from-X'.
+
+    Clears `thinking` on the new version: a restore is not a fresh model
+    analysis. The original version's thinking is still readable via the
+    history view (each version keeps its own thinking on disk)."""
     src = load_version(template_id, version)
     if src is None:
         raise FileNotFoundError(f"Version {version} not found for template '{template_id}'")
+    src = dict(src)
+    src.pop("thinking", None)
     return add_version(template_id, src, action=f"restore-from-{version}")
 
 

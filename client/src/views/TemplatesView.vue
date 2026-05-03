@@ -76,6 +76,15 @@
               @click="openHistory"
               title="View past versions of this template"
             >History</button>
+            <button
+              v-if="!isNew"
+              class="px-3 py-2 border border-border rounded-lg text-text-muted text-sm
+                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer
+                     disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              :disabled="!editing.thinking"
+              :title="editing.thinking ? 'View what the model understood when this version was generated' : 'No thinking on this version (manual edit or restore)'"
+              @click="showThinking = true"
+            ></button>
           </div>
           <div class="flex gap-3">
             <button
@@ -440,6 +449,35 @@
       </div>
     </Teleport>
 
+    <!-- Thinking modal -->
+    <Teleport to="body">
+      <div v-if="showThinking" class="fixed inset-0 bg-bg-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="showThinking = false">
+        <div class="bg-bg-secondary border border-border rounded-2xl w-full max-w-3xl flex flex-col shadow-2xl max-h-[80vh]">
+          <div class="px-5 py-4 border-b border-border flex items-center justify-between">
+            <h2 class="text-lg font-semibold">Model Thinking — {{ editing?.name }}</h2>
+            <button class="text-text-muted hover:text-text-primary cursor-pointer" @click="showThinking = false">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="flex-1 overflow-y-auto px-5 py-4">
+            <p class="text-xs text-text-muted mb-3">
+              What the model understood and decided when this version was generated. Captured at chub-import / enrich / rerun time. Cleared on restore.
+            </p>
+            <pre class="whitespace-pre-wrap font-mono text-xs text-text-primary bg-bg-primary border border-border-subtle rounded-lg p-4 leading-relaxed">{{ editing?.thinking || '(no thinking on this version)' }}</pre>
+          </div>
+          <div class="px-5 py-3 border-t border-border flex justify-end">
+            <button
+              class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
+                     hover:bg-bg-surface hover:text-text-primary transition-all cursor-pointer"
+              @click="showThinking = false"
+            >Close</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
   </div>
 </template>
 
@@ -465,6 +503,7 @@ const showImport = ref(false);
 const imageInput = ref(null);
 const imageUploading = ref(false);
 const showHistory = ref(false);
+const showThinking = ref(false);
 const historyEntries = ref([]);
 const restoring = ref(false);
 const checkpointing = ref(false);

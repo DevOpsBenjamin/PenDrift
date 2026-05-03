@@ -147,7 +147,9 @@ async def _llm_template_call(
     max_tokens: int = 4096,
 ) -> dict:
     """Shared LLM call for any chub_import-shaped operation (import, rerun,
-    enrich). Returns the parsed template body with `thinking` stripped.
+    enrich). Returns the parsed template body — `thinking` is preserved on
+    the body so it gets persisted with the template version, letting the
+    user inspect what the model understood at conversion time.
 
     Forwards LLM events to `job` (when provided) so the toast bar / Activity
     view see live token streaming."""
@@ -168,7 +170,6 @@ async def _llm_template_call(
             f"Model output is not valid JSON ({e.msg} at char {e.pos} of {len(raw)}). "
             f"Check Activity view → recent call → dump file."
         ) from e
-    template.pop("thinking", None)
     return template
 
 
