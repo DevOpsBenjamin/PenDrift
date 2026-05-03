@@ -68,7 +68,9 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
     preset_id, template_id, last_meta_idx, template_version = session_row[0]
 
     from app.config import DATA_DIR
-    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{preset_id}.json").read_text(encoding="utf-8"))
+    from app.routers.presets import find_default_preset_id
+    eff_id = preset_id if (preset_id and preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
     template = _load_template_for_session(template_id, template_version)
 
     chunk_rows = await db.execute_fetchall(
@@ -384,7 +386,9 @@ async def query_streaming(session_id: str, body: dict):
     preset_id, template_id, template_version = session_row[0]
 
     from app.config import DATA_DIR
-    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{preset_id}.json").read_text(encoding="utf-8"))
+    from app.routers.presets import find_default_preset_id
+    eff_id = preset_id if (preset_id and preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
     template = _load_template_for_session(template_id, template_version)
 
     char_rows = await db.execute_fetchall(
@@ -536,8 +540,10 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
             (session_id,),
         )
         preset_id, template_id, last_meta_idx, template_version = session_row[0]
+        from app.routers.presets import find_default_preset_id
+        eff_id = preset_id if (preset_id and preset_id != "default") else find_default_preset_id()
         from app.config import DATA_DIR
-        settings = json.loads((DATA_DIR / "presets" / "settings" / f"{preset_id}.json").read_text(encoding="utf-8"))
+        settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
         template = _load_template_for_session(template_id, template_version)
 
         # Context = chunks BEFORE the target one (in same chapter)

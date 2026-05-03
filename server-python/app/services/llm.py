@@ -95,6 +95,10 @@ async def sse_completion(
     """
     kwargs = provider_kwargs or {}
     provider = get_provider(provider_name, **kwargs)
+    # NOTE: callers (stream_narrative, _llm_template_call, run_meta_analysis,
+    # generate_chapter_title, consolidate, generate_completion) already hold
+    # `_get_lock()` around their entire flow. `asyncio.Lock` is NOT reentrant —
+    # acquiring it here would deadlock the same task on every LLM call.
     async for event in provider.sse_completion(body, activity_call=activity_call, kind=kind):
         yield event
 
@@ -110,6 +114,7 @@ async def _buffered_completion(
     """Consume `sse_completion` into a buffered response shaped like the
     non-streaming OpenAI completion. Returns (assembled, duration_ms)."""
     content_pieces: list[str] = []
+    thinking_pieces: list[str] = []
     usage: dict = {}
     model_name = ""
     start = time.monotonic()
@@ -117,6 +122,8 @@ async def _buffered_completion(
     async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_kwargs, activity_call=activity_call, kind=kind):
         if ev["type"] == "delta":
             content_pieces.append(ev["text"])
+        elif ev["type"] == "thinking_delta":
+            thinking_pieces.append(ev["text"])
         elif ev["type"] == "model":
             model_name = ev["name"]
         elif ev["type"] == "usage":
@@ -127,7 +134,10 @@ async def _buffered_completion(
              kind, len(content_pieces), duration_ms, usage or "-")
 
     assembled = {
-        "choices": [{"message": {"content": "".join(content_pieces)}}],
+        "choices": [{"message": {
+            "content": "".join(content_pieces),
+            "reasoning_content": "".join(thinking_pieces)
+        }}],
         "model": model_name,
         "usage": usage,
     }
@@ -172,9 +182,28 @@ async def generate_completion(
             )
             provider_name = (settings or {}).get("provider", "llama-server")
             provider_config = (settings or {}).get("providerConfig", {}).get(provider_name, {})
+            # The outer `async with _get_lock()` above already serialises this
+            # call. Don't re-acquire (asyncio.Lock is non-reentrant — would
+            # deadlock the same task).
             data, duration_ms = await _buffered_completion(body, call, kind, provider_name, provider_config)
 
-        raw_content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+        msg = (data.get("choices") or [{}])[0].get("message", {})
+        raw_content = msg.get("content", "")
+        reasoning = msg.get("reasoning_content", "")
+        
+        # If we have external reasoning but the JSON is missing the 'thinking' field, inject it
+        if reasoning and raw_content.strip().startswith("{"):
+            try:
+                parsed = json.loads(raw_content)
+                if "thinking" not in parsed or not parsed["thinking"]:
+                    # Create a new dict with 'thinking' as the FIRST key
+                    new_obj = {"thinking": reasoning}
+                    new_obj.update(parsed)
+                    raw_content = json.dumps(new_obj, ensure_ascii=False, indent=2)
+                    log.info("[%s] Injected reasoning_content into JSON 'thinking' field", kind)
+            except Exception:
+                pass # Not a valid JSON or other error, leave it as is
+
         stats = _extract_usage(data, duration_ms)
         model = data.get("model", "")
         llm_activity.mark_done(call, stats=stats, model=model, raw_response=raw_content)

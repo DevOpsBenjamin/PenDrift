@@ -105,6 +105,10 @@ class OpenAICompatibleProvider:
                             continue
                         delta = choices[0].get("delta") or {}
                         piece = delta.get("content")
+                        reasoning = delta.get("reasoning_content")
+
+                        if reasoning:
+                            yield {"type": "thinking_delta", "text": reasoning}
 
                         if piece and first_token_at is None:
                             first_token_at = time.time()

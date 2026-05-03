@@ -100,15 +100,20 @@ def _load_history_from_disk() -> None:
             _history.appendleft(json.loads(line))
         except json.JSONDecodeError:
             continue
+    log.info("Loaded %d history entries from disk.", len(_history))
 
 
 def _append_history_to_disk(entry: dict) -> None:
-    try:
-        _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _HISTORY_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError as e:
-        log.warning("Could not append history entry to %s: %s", _HISTORY_PATH, e)
+    def _do_append():
+        try:
+            _HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with _HISTORY_PATH.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError as e:
+            log.warning("Could not append history entry to %s: %s", _HISTORY_PATH, e)
+    
+    # Run in a background thread to avoid blocking the event loop
+    asyncio.get_event_loop().run_in_executor(None, _do_append)
 
 
 def register(kind: str, session_id: str | None = None) -> LlmCall:
@@ -170,7 +175,10 @@ def mark_done(
     else:
         call.status = "success"
     if raw_response:
-        call.dump_file = _dump_response(call, raw_response)
+        # Pass raw_response as argument to avoid closure issues if needed
+        def _save_res():
+            call.dump_file = _dump_response(call, raw_response)
+        asyncio.get_event_loop().run_in_executor(None, _save_res)
     entry = asdict(call)
     _history.appendleft(entry)
     _append_history_to_disk(entry)
@@ -195,15 +203,18 @@ def _dump_response(call: LlmCall, raw: str) -> str | None:
 def set_request(call: LlmCall, body: dict) -> None:
     """Persist the request body (messages, samplers, grammar, etc) sent to
     llama-server, for inspection from the Activity view."""
-    try:
-        _REQUEST_DIR.mkdir(parents=True, exist_ok=True)
-        ts = datetime.fromtimestamp(call.started_at).strftime("%Y%m%d-%H%M%S")
-        filename = f"{ts}-{call.kind}-{call.id[:8]}.json"
-        path = _REQUEST_DIR / filename
-        path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
-        call.request_file = filename
-    except OSError as e:
-        log.warning("Failed to dump LLM request for call %s: %s", call.id, e)
+    def _do_save():
+        try:
+            _REQUEST_DIR.mkdir(parents=True, exist_ok=True)
+            ts = datetime.fromtimestamp(call.started_at).strftime("%Y%m%d-%H%M%S")
+            filename = f"{ts}-{call.kind}-{call.id[:8]}.json"
+            path = _REQUEST_DIR / filename
+            path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+            call.request_file = filename
+        except OSError as e:
+            log.warning("Failed to dump LLM request for call %s: %s", call.id, e)
+    
+    asyncio.get_event_loop().run_in_executor(None, _do_save)
 
 
 def snapshot() -> dict:
@@ -212,3 +223,5 @@ def snapshot() -> dict:
         "active": [asdict(c) for c in _active.values()],
         "history": list(_history),
     }
+# Load history on import
+_load_history_from_disk()

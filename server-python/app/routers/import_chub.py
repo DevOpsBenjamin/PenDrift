@@ -13,8 +13,10 @@ from app.config import DATA_DIR
 router = APIRouter()
 
 
-def _load_settings(preset_id: str = "default") -> dict:
-    path = DATA_DIR / "presets" / "settings" / f"{preset_id}.json"
+def _load_settings(preset_id: str | None = None) -> dict:
+    from app.routers.presets import find_default_preset_id
+    pid = preset_id or find_default_preset_id()
+    path = DATA_DIR / "presets" / "settings" / f"{pid}.json"
     if not path.is_file():
         path = DATA_DIR / "presets" / "settings" / "default.json"
     return json.loads(path.read_text(encoding="utf-8"))
@@ -34,13 +36,16 @@ def _build_card_summary(card: dict) -> dict:
 async def _import_runner(job: Job, card: dict, settings: dict, url: str | None) -> None:
     """Job runner that converts a card → template → saves to disk → fetches
     avatar. Emits phase + LLM events for the toast bar."""
-    job.emit({"type": "phase", "name": "ensure_model"})
-    try:
-        await llm_process.ensure_loaded(settings)
-    except RuntimeError as e:
-        raise RuntimeError(str(e))
-    except TimeoutError as e:
-        raise RuntimeError(f"llama-server failed to start: {e}")
+    # Only auto-start the local llama-server when the preset actually targets
+    # it. For external providers (xai, openai, ...) llama-server is irrelevant.
+    if settings.get("provider", "llama-server") == "llama-server":
+        job.emit({"type": "phase", "name": "ensure_model"})
+        try:
+            await llm_process.ensure_loaded(settings)
+        except RuntimeError as e:
+            raise RuntimeError(str(e))
+        except TimeoutError as e:
+            raise RuntimeError(f"llama-server failed to start: {e}")
 
     job.emit({"type": "phase", "name": "convert"})
     template = await convert_card_to_template(card, settings, job=job)
@@ -88,9 +93,10 @@ async def import_from_chub(body: dict):
     - card: raw V2 character card JSON (alternative to url)
     - settingsPresetId: which preset to read the import prompt from (default: "default")
     """
+    from app.routers.presets import find_default_preset_id
     url = body.get("url")
     raw_card = body.get("card")
-    preset_id = body.get("settingsPresetId", "default")
+    preset_id = body.get("settingsPresetId") or find_default_preset_id()
 
     if not url and not raw_card:
         raise HTTPException(400, "Provide 'url' (chub.ai link) or 'card' (raw JSON)")
@@ -127,17 +133,19 @@ async def import_from_json_upload(body: dict):
     if not card_data:
         raise HTTPException(400, "Provide 'card' with the character card JSON")
 
-    preset_id = body.get("settingsPresetId", "default")
+    from app.routers.presets import find_default_preset_id
+    preset_id = body.get("settingsPresetId") or find_default_preset_id()
     settings = _load_settings(preset_id)
 
     card = _normalize_card(card_data) if isinstance(card_data, dict) else _normalize_card(json.loads(card_data))
 
     async def _runner(j: Job):
-        j.emit({"type": "phase", "name": "ensure_model"})
-        try:
-            await llm_process.ensure_loaded(settings)
-        except (RuntimeError, TimeoutError) as e:
-            raise RuntimeError(str(e))
+        if settings.get("provider", "llama-server") == "llama-server":
+            j.emit({"type": "phase", "name": "ensure_model"})
+            try:
+                await llm_process.ensure_loaded(settings)
+            except (RuntimeError, TimeoutError) as e:
+                raise RuntimeError(str(e))
         j.emit({"type": "phase", "name": "convert"})
         template = await convert_card_to_template(card, settings, job=j)
         j.set_result({"template": template})

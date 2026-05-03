@@ -22,6 +22,7 @@ file only concerns itself with grammar-aware parsing and event emission.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -190,10 +191,11 @@ async def stream_narrative(
              len(messages), max_tokens or "-")
 
     try:
-        async with _get_lock():
-            llm_activity.mark_running(call)
-            yield {"type": "started", "callId": call.id}
+        llm_activity.mark_running(call)
+        yield {"type": "started", "callId": call.id}
 
+        lock_cm = _get_lock() if provider_name == "llama-server" else contextlib.nullcontext()
+        async with lock_cm:
             async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="narrative-stream"):
                 if ev["type"] == "delta":
                     piece = ev["text"]
@@ -219,6 +221,17 @@ async def stream_narrative(
                             if fname in field_text:
                                 field_text[fname].append(parsed_ev["text"])
                         yield parsed_ev
+                elif ev["type"] == "thinking_delta":
+                    piece = ev["text"]
+                    if not field_text["thinking"]:
+                        yield {"type": "thinking_start"}
+                    field_text["thinking"].append(piece)
+                    thinking_tokens += 1
+                    llm_activity.update_field_tokens(
+                        call,
+                        thinking=thinking_tokens,
+                    )
+                    yield {"type": "thinking_chunk", "text": piece}
                 elif ev["type"] == "model":
                     model_name = ev["name"]
                 elif ev["type"] == "usage":
@@ -336,16 +349,22 @@ async def stream_query(
     log.info("[query-stream] POST messages=%d max_tokens=%s", len(messages), max_tokens or "-")
 
     try:
-        async with _get_lock():
-            llm_activity.mark_running(call)
-            yield {"type": "started", "callId": call.id}
+        llm_activity.mark_running(call)
+        yield {"type": "started", "callId": call.id}
 
+        lock_cm = _get_lock() if provider_name == "llama-server" else contextlib.nullcontext()
+        async with lock_cm:
             async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="query-stream"):
                 if ev["type"] == "delta":
                     piece = ev["text"]
                     full_buffer += piece
                     for parsed_ev in parser.push(piece):
                         yield parsed_ev
+                elif ev["type"] == "thinking_delta":
+                    piece = ev["text"]
+                    # For query, we don't need thinking_start if it's already part of the JSON,
+                    # but if it's external, we emit it to the UI.
+                    yield {"type": "thinking_chunk", "text": piece}
                 elif ev["type"] == "model":
                     model_name = ev["name"]
                 elif ev["type"] == "usage":

@@ -32,7 +32,17 @@ GOOD (PenDrift style): "It's a Monday morning at the office. The fluorescent lig
 
 The scenario sets the WORLD, TIME, and STARTING SITUATION. Not what any specific character is doing — that comes from the masked intents and the narrative generation.
 
-### 3. MASKED INTENTS
+### 3. MILESTONES
+Analyze the `first_message` and ALL `alternate_greetings`. In a PenDrift template, these are not just starting points — they are TIMED WAYPOINTS along a narrative arc (Setup / Escalation / Climax).
+
+For each greeting, determine its place in the story's timeline and create a milestone:
+- **Title**: A short, evocative name for this beat.
+- **Goal**: What this milestone represents in the character's journey or the relationship's evolution.
+- **Trigger/Context**: When or why this waypoint should be reached.
+
+These milestones guide the director. Instead of a list of independent stories, they should feel like a cohesive path the user can navigate.
+
+### 4. MASKED INTENTS
 This is the most important and creative part of your job.
 
 Masked intents are HIDDEN NARRATIVE DRIVERS — secrets, motivations, feelings that characters have but that should never be stated directly in the narrative. They influence how characters BEHAVE without being exposed as narrator commentary.
@@ -95,6 +105,10 @@ Return ONLY valid JSON. The `thinking` field comes FIRST and contains your full 
     { "name": "Name", "description": "Who they are", "initialState": "Starting state" }
   ],
   "scenario": "Third-person narrative scenario",
+  "milestones": [
+    "Milestone 1: The Encounter - Goal/Context",
+    "Milestone 2: The Revelation - Goal/Context"
+  ],
   "maskedIntents": [ "Hidden driver 1", "Hidden driver 2" ],
   "systemPromptAdditions": "Style and tone instructions"
 }

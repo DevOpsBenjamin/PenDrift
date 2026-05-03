@@ -282,7 +282,8 @@ async def _template_op_runner(
     """Job runner shared by rerun + enrich. Ensures the model is loaded,
     streams LLM events to the job, then saves the new version to disk."""
     from app.services import llm_process
-    if not llm_process.is_running():
+    # External providers (xai, openai, ...) don't need llama-server running.
+    if settings.get("provider", "llama-server") == "llama-server" and not llm_process.is_running():
         job.emit({"type": "model_loading", "modelPath": settings.get("modelPath")})
         try:
             await llm_process.ensure_loaded(settings)
@@ -367,8 +368,9 @@ async def rerun_template_analysis(template_id: str, body: dict):
     SSE response — emits processing heartbeats then a `done` event when the new
     version is saved. Survives client disconnect (the new version still lands
     on disk and shows up in History)."""
+    from app.routers.presets import find_default_preset_id
     source_filename = body.get("sourceFilename")
-    preset_id = body.get("settingsPresetId", "default")
+    preset_id = body.get("settingsPresetId") or find_default_preset_id()
     if not source_filename:
         raise HTTPException(400, "sourceFilename is required")
     from app.services.chub_importer import rerun_with_current
@@ -383,8 +385,9 @@ async def rerun_template_analysis(template_id: str, body: dict):
 async def enrich_template(template_id: str, body: dict):
     """Merge a NEW card into the current template (different character, same
     universe). SSE response, same shape as rerun."""
+    from app.routers.presets import find_default_preset_id
     source_filename = body.get("sourceFilename")
-    preset_id = body.get("settingsPresetId", "default")
+    preset_id = body.get("settingsPresetId") or find_default_preset_id()
     if not source_filename:
         raise HTTPException(400, "sourceFilename is required")
     from app.services.chub_importer import enrich_with_new_card
