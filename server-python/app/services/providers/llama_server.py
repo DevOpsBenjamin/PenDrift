@@ -27,6 +27,7 @@ import httpx
 from app.services import llm_activity
 from app.services.llm_process import get_base_url
 from app.services.providers.base import ProgressLogger, start_heartbeat
+from app.utils.structured_outputs import STRUCTURED_OUTPUTS
 
 log = logging.getLogger("pendrift.providers.llama_server")
 
@@ -52,6 +53,10 @@ class LlamaServerProvider:
             "stream_options": {"include_usage": True},
             "chat_template_kwargs": {"enable_thinking": False},
         }
+
+        # Inject grammar if a known kind is provided and not already present
+        if kind in STRUCTURED_OUTPUTS and "grammar" not in body:
+            body["grammar"] = STRUCTURED_OUTPUTS[kind]["gbnf"]
         url = f"{get_base_url()}/v1/chat/completions"
 
         n_msgs = len(body.get("messages") or [])

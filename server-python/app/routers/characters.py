@@ -12,7 +12,6 @@ from app.services import job_manager, llm_activity
 from app.services.job_manager import Job
 from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
 from app.services.meta_analysis import run_meta_analysis
-from app.utils.grammars import CONSOLIDATE_GRAMMAR
 
 router = APIRouter()
 
@@ -184,7 +183,6 @@ Return JSON: put your reasoning in `thinking`, then the compressed data:
             consolidate_messages,
             temperature=0.2,
             max_tokens=(settings.get("maxTokens", 4096)) * 3,
-            grammar=CONSOLIDATE_GRAMMAR,
         )
         call = llm_activity.register("consolidate", session_id)
         llm_activity.attach_task(call, asyncio.current_task())
@@ -195,7 +193,9 @@ Return JSON: put your reasoning in `thinking`, then the compressed data:
             async with _get_lock():
                 llm_activity.mark_running(call)
                 j.emit({"type": "llm_start", "kind": "consolidate", "callId": call.id})
-                async for ev in sse_completion(body, activity_call=call, kind="consolidate"):
+                provider_name = settings.get("provider", "llama-server")
+                provider_config = settings.get("providerConfig", {}).get(provider_name, {})
+                async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="consolidate"):
                     if ev["type"] == "delta":
                         full.append(ev["text"])
                     elif ev["type"] == "model":

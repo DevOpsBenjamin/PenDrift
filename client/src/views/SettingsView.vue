@@ -119,27 +119,38 @@
           </div>
         </div>
 
-        <!-- Model Loading -->
-        <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Model Loading</h3>
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">GGUF Model Path</label>
-          <div class="flex gap-2">
-            <input v-model="editing.modelPath" placeholder="I:\models\qwen3.5-27b-q3.gguf"
-              class="flex-1 px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
-                     focus:outline-none focus:border-accent transition-colors" />
-            <button
-              class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-secondary text-sm
-                     hover:border-accent/40 hover:text-text-primary transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
-              @click="showBrowser = true"
-              title="Browse for a .gguf file"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-              </svg>
-              Browse
-            </button>
-          </div>
+        <div class="flex flex-col gap-1.5 mt-2">
+          <label class="text-xs text-text-muted font-medium uppercase tracking-wider">Provider</label>
+          <select v-model="editing.provider"
+            class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent transition-colors">
+            <option value="llama-server">llama.cpp (Local GGUF)</option>
+            <option value="xai" :disabled="!providerStatus.xai">xAI {{ providerStatus.xai ? '' : '(Key not set in .env)' }}</option>
+            <option value="openai" :disabled="!providerStatus.openai">OpenAI {{ providerStatus.openai ? '' : '(Key not set in .env)' }}</option>
+          </select>
         </div>
+
+        <!-- Local Model Loading -->
+        <template v-if="editing.provider === 'llama-server'">
+          <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Model Loading</h3>
+          <div class="flex flex-col gap-1.5">
+            <label class="text-xs text-text-muted font-medium uppercase tracking-wider">GGUF Model Path</label>
+            <div class="flex gap-2">
+              <input v-model="editing.modelPath" placeholder="I:\models\qwen3.5-27b-q3.gguf"
+                class="flex-1 px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm font-mono
+                       focus:outline-none focus:border-accent transition-colors" />
+              <button
+                class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-secondary text-sm
+                       hover:border-accent/40 hover:text-text-primary transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                @click="showBrowser = true"
+                title="Browse for a .gguf file"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                </svg>
+                Browse
+              </button>
+            </div>
+          </div>
 
         <div class="grid grid-cols-3 gap-3">
           <div class="flex flex-col gap-1.5">
@@ -162,23 +173,50 @@
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <button
-            class="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-all cursor-pointer active:scale-95"
-            :class="isActivePreset && llmStatus.running
-              ? 'bg-error hover:bg-error/80'
-              : 'bg-accent hover:bg-accent-hover'"
-            :disabled="llmLoading || (!llmVersionInfo.installed && !llmExePath) || !editing.modelPath"
-            @click="isActivePreset && llmStatus.running ? doUnload() : doLoad()"
-          >
-            <span v-if="llmLoading">{{ llmLoadingText }}</span>
-            <span v-else-if="isActivePreset && llmStatus.running">Unload Model</span>
-            <span v-else>Load Model</span>
-          </button>
-          <span v-if="isActivePreset && llmStatus.running" class="text-xs text-green-400">● This preset is active</span>
-          <span v-else-if="llmStatus.running" class="text-xs text-text-muted">Another model is loaded</span>
-          <span v-if="llmError" class="text-sm text-error">{{ llmError }}</span>
-        </div>
+          <div class="flex items-center gap-3">
+            <button
+              class="px-5 py-2.5 rounded-lg text-white text-sm font-semibold transition-all cursor-pointer active:scale-95"
+              :class="isActivePreset && llmStatus.running
+                ? 'bg-error hover:bg-error/80'
+                : 'bg-accent hover:bg-accent-hover'"
+              :disabled="llmLoading || (!llmVersionInfo.installed && !llmExePath) || !editing.modelPath"
+              @click="isActivePreset && llmStatus.running ? doUnload() : doLoad()"
+            >
+              <span v-if="llmLoading">{{ llmLoadingText }}</span>
+              <span v-else-if="isActivePreset && llmStatus.running">Unload Model</span>
+              <span v-else>Load Model</span>
+            </button>
+            <span v-if="isActivePreset && llmStatus.running" class="text-xs text-green-400">● This preset is active</span>
+            <span v-else-if="llmStatus.running" class="text-xs text-text-muted">Another model is loaded</span>
+            <span v-if="llmError" class="text-sm text-error">{{ llmError }}</span>
+          </div>
+        </template>
+        
+        <!-- External API Configuration -->
+        <template v-else-if="editing.provider === 'xai' || editing.provider === 'openai'">
+          <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">API Configuration</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+             <div class="flex flex-col gap-1.5">
+               <label class="text-xs text-text-muted flex justify-between">
+                 Model Name
+                 <button class="text-accent hover:underline text-[10px]" @click="refreshModels" :disabled="fetchingModels">
+                   {{ fetchingModels ? 'Fetching...' : 'Fetch List' }}
+                 </button>
+               </label>
+               <input v-model="editing.providerConfig[editing.provider].model" :list="'models-list-' + editing.provider"
+                 class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent transition-colors" />
+               <datalist :id="'models-list-' + editing.provider">
+                 <option v-for="m in remoteModels" :key="m" :value="m"></option>
+               </datalist>
+             </div>
+             <div class="flex flex-col gap-1.5">
+               <label class="text-xs text-text-muted">Base URL</label>
+               <input v-model="editing.providerConfig[editing.provider].baseUrl"
+                 class="px-3 py-2 bg-bg-primary border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:border-accent transition-colors" />
+             </div>
+          </div>
+          <p class="text-xs text-text-muted">API Keys are securely read from the backend <code>.env</code> file. No keys are saved in this preset.</p>
+        </template>
 
         <!-- Samplers -->
         <h3 class="text-xs text-text-muted font-semibold uppercase tracking-wider pt-3 border-t border-border-subtle">Samplers</h3>
@@ -357,7 +395,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useSettingsStore } from '../stores/settings.js';
 import * as llmApi from '../api/llm.js';
 import * as promptsApi from '../api/prompts.js';
@@ -415,6 +453,8 @@ const llmVersionInfo = ref({ installed: null, latest: null, updateAvailable: fal
 const llmVariant = ref('cuda13');
 const llmDownloading = ref(false);
 
+const providerStatus = ref({ "llama-server": true, "xai": false, "openai": false });
+
 const isActivePreset = computed(() =>
   llmStatus.value.running
   && editing.value?.modelPath
@@ -438,6 +478,9 @@ onMounted(async () => {
     llmStatus.value = status;
     if (status.exePath) llmExePath.value = status.exePath;
   } catch { /* backend not running yet */ }
+  try {
+    providerStatus.value = await llmApi.getProviderStatus();
+  } catch { /* ok */ }
   try {
     llmVersionInfo.value = await llmApi.getVersion();
   } catch { /* ok */ }
@@ -512,6 +555,7 @@ async function doUnload() {
 function edit(preset) {
   editing.value = withDefaults(JSON.parse(JSON.stringify(preset)));
   isNew.value = false;
+  refreshModels();
 }
 
 function duplicate(preset) {
@@ -520,6 +564,7 @@ function duplicate(preset) {
   copy.name = copy.name + ' (copy)';
   editing.value = copy;
   isNew.value = true;
+  refreshModels();
 }
 
 function startNew() {
@@ -533,16 +578,27 @@ function startNew() {
         maxTokens: 10240, contextSize: 65536,
         thinkingTokens: 1500, narrativeTokens: 500, suggestionTokens: 200,
         chunkUpdateInterval: 5,
+        provider: 'llama-server',
+        providerConfig: {
+          xai: { model: 'grok-beta', baseUrl: 'https://api.x.ai/v1' },
+          openai: { model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' }
+        }
       };
   template.id = '';
   template.name = '';
   template.modelPath = '';
   editing.value = withDefaults(template);
   isNew.value = true;
+  refreshModels();
 }
 
 function withDefaults(p) {
   // Fill in fields that may be missing on legacy preset JSONs
+  if (!p.provider) p.provider = 'llama-server';
+  if (!p.providerConfig) p.providerConfig = {
+    xai: { model: 'grok-beta', baseUrl: 'https://api.x.ai/v1' },
+    openai: { model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' }
+  };
   if (p.modelPath == null) p.modelPath = '';
   if (p.gpuLayers == null) p.gpuLayers = 99;
   if (p.port == null) p.port = 8080;
@@ -572,4 +628,28 @@ async function setAsDefault() {
   // Reflect on the currently edited copy as well
   editing.value.isDefault = true;
 }
+const remoteModels = ref([]);
+const fetchingModels = ref(false);
+
+async function refreshModels() {
+  if (!editing.value || !['xai', 'openai'].includes(editing.value.provider)) {
+    remoteModels.value = [];
+    return;
+  }
+  const provider = editing.value.provider;
+  const baseUrl = editing.value.providerConfig[provider].baseUrl;
+  fetchingModels.value = true;
+  try {
+    const res = await llmApi.getProviderModels(provider, baseUrl);
+    remoteModels.value = res.models || [];
+  } catch (e) {
+    console.error("Failed to fetch models", e);
+    remoteModels.value = [];
+  } finally {
+    fetchingModels.value = false;
+  }
+}
+
+watch(() => editing.value?.provider, refreshModels);
+
 </script>

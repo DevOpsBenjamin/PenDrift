@@ -26,6 +26,47 @@ async def llm_status():
     }
 
 
+@router.get("/providers/status")
+async def provider_status():
+    xai_key = os.environ.get("XAI_API_KEY", "")
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+
+    def is_configured(k: str) -> bool:
+        return bool(k and k.strip() and k != "<REPLACEHER>")
+
+    return {
+        "xai": is_configured(xai_key),
+        "openai": is_configured(openai_key),
+        "llama-server": True,
+    }
+
+
+@router.get("/providers/{provider}/models")
+async def list_provider_models(provider: str, base_url: str):
+    import os
+    import httpx
+    if provider == "xai":
+        api_key = os.environ.get("XAI_API_KEY")
+    elif provider == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY")
+    else:
+        raise HTTPException(400, "Unsupported provider for remote models")
+
+    if not api_key or api_key == "<REPLACEHER>":
+        raise HTTPException(400, f"API key not configured for {provider}")
+
+    try:
+        url = f"{base_url.rstrip('/')}/models"
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
+            r.raise_for_status()
+            data = r.json()
+            models = [m["id"] for m in data.get("data", []) if "id" in m]
+            return {"models": models}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch models: {e}")
+
+
 @router.post("/load")
 async def load_model(req: LoadModelRequest):
     model_path = req.model_path

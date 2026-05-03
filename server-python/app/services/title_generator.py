@@ -9,7 +9,6 @@ from app.database import get_db
 from app.services import llm_activity
 from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
 from app.services.job_manager import Job
-from app.utils.grammars import TITLE_GRAMMAR
 
 log = logging.getLogger("pendrift.title_gen")
 
@@ -76,14 +75,14 @@ async def generate_chapter_title(
                 messages,
                 temperature=0.7,
                 max_tokens=400,
-                grammar=TITLE_GRAMMAR,
                 kind="title",
                 session_id=session_id,
+                settings=settings,
             )
             raw = result["raw"]
         else:
             # Stream LLM events into the job so the toast shows live progress.
-            body = _build_body(messages, temperature=0.7, max_tokens=400, grammar=TITLE_GRAMMAR)
+            body = _build_body(messages, temperature=0.7, max_tokens=400)
             call = llm_activity.register("title", session_id)
             llm_activity.attach_task(call, asyncio.current_task())
             full: list[str] = []
@@ -93,7 +92,9 @@ async def generate_chapter_title(
                 async with _get_lock():
                     llm_activity.mark_running(call)
                     job.emit({"type": "llm_start", "kind": "title", "callId": call.id})
-                    async for ev in sse_completion(body, activity_call=call, kind="title"):
+                    provider_name = settings.get("provider", "llama-server")
+                    provider_config = settings.get("providerConfig", {}).get(provider_name, {})
+                    async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="title"):
                         if ev["type"] == "delta":
                             full.append(ev["text"])
                         elif ev["type"] == "model":

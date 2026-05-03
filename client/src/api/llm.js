@@ -1,6 +1,9 @@
 import api from './client.js';
 
 export const getLlmStatus = () => api.get('llm/status').json();
+export const getProviderStatus = () => api.get('llm/providers/status').json();
+export const getProviderModels = (provider, baseUrl) => 
+  api.get(`llm/providers/${encodeURIComponent(provider)}/models`, { searchParams: { base_url: baseUrl } }).json();
 
 export const loadModel = ({ modelPath, gpuLayers, contextSize, port }) =>
   api.post('llm/load', {

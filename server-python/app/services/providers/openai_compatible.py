@@ -49,8 +49,20 @@ To finish this provider:
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import os
+import time
 from typing import AsyncIterator
 
+import httpx
+
+from app.services import llm_activity
+from app.services.providers.base import ProgressLogger, start_heartbeat
+from app.utils.structured_outputs import STRUCTURED_OUTPUTS
+
+log = logging.getLogger("pendrift.providers.openai")
 
 class OpenAICompatibleProvider:
     name = "openai"
@@ -63,7 +75,7 @@ class OpenAICompatibleProvider:
         model: str = "gpt-4o-mini",
         timeout_s: float = 600.0,
     ):
-        self._api_key = api_key
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout_s
@@ -75,29 +87,116 @@ class OpenAICompatibleProvider:
         activity_call=None,
         kind: str = "completion",
     ) -> AsyncIterator[dict]:
-        # The body we receive carries `grammar` (GBNF) — OpenAI's API doesn't
-        # speak GBNF. Until JSON Schema versions of the grammars exist (see
-        # module docstring), refuse with a precise error so the caller knows
-        # exactly what's missing.
-        if "grammar" in body:
-            raise NotImplementedError(
-                "OpenAI provider doesn't accept GBNF grammar. PenDrift's grammars "
-                "in app/utils/grammars.py need JSON Schema equivalents before this "
-                "provider can serve narrative/meta/etc. calls. See "
-                "providers/openai_compatible.py module docstring for the migration "
-                "plan."
-            )
         if not self._api_key:
-            raise NotImplementedError(
-                "OpenAI provider requires an api_key. Wire it in via the preset "
-                "settings (e.g., settings.providerConfig.apiKey) and pass to "
-                "get_provider('openai', api_key=..., base_url=..., model=...)."
+            raise ValueError(
+                "OpenAI provider requires an api_key. Set the OPENAI_API_KEY environment variable."
             )
-        raise NotImplementedError(
-            "OpenAICompatibleProvider.sse_completion is not implemented yet — "
-            "this is scaffolding. See module docstring for what's needed."
-        )
-        # The next line is unreachable; it's here so the function is a valid
-        # async generator (otherwise the `raise NotImplementedError` makes it
-        # a regular async function, which would mismatch the Protocol).
-        yield {"type": "delta", "text": ""}  # pragma: no cover
+
+        payload = {
+            "model": self._model,
+            "messages": body.get("messages", []),
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+
+        # Map supported sampling parameters
+        for k in ("temperature", "max_tokens", "top_p", "presence_penalty", "frequency_penalty"):
+            if k in body:
+                payload[k] = body[k]
+
+        if kind in STRUCTURED_OUTPUTS:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": kind,
+                    "strict": STRUCTURED_OUTPUTS[kind].get("strict", True),
+                    "schema": STRUCTURED_OUTPUTS[kind]["json_schema"],
+                },
+            }
+        elif "grammar" in body:
+            log.warning("[%s] OpenAI provider does not support GBNF grammar. Dropping it.", kind)
+
+        url = f"{self._base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+
+        n_msgs = len(payload["messages"])
+        log.info("[%s] POST %s  messages=%d  model=%s", kind, url, n_msgs, self._model)
+
+        if activity_call is not None:
+            llm_activity.set_request(activity_call, payload)
+
+        heartbeat_stop, hb_task = start_heartbeat(kind)
+        progress = ProgressLogger(kind)
+
+        start = time.monotonic()
+        first_token_at: float | None = None
+        bad_chunks = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                    resp.raise_for_status()
+                    log.info("[%s] SSE connected, waiting for first token…", kind)
+                    
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if not data_str or data_str == "[DONE]":
+                            continue
+                        
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            bad_chunks += 1
+                            continue
+
+                        if chunk.get("model"):
+                            yield {"type": "model", "name": chunk["model"]}
+                        if chunk.get("usage"):
+                            yield {"type": "usage", "data": chunk["usage"]}
+
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        
+                        delta = choices[0].get("delta") or {}
+                        piece = delta.get("content")
+
+                        if piece and first_token_at is None:
+                            first_token_at = time.time()
+                            heartbeat_stop.set()
+                            ms = int((time.monotonic() - start) * 1000)
+                            log.info("[%s] first token after %dms", kind, ms)
+                            progress.first_token(ms)
+                            yield {"type": "first_token", "ms": ms}
+
+                        if not piece:
+                            continue
+
+                        progress.tick()
+                        if activity_call is not None:
+                            llm_activity.update_progress(
+                                activity_call,
+                                tokens=progress.token_count,
+                                first_token_at=first_token_at,
+                            )
+
+                        yield {"type": "delta", "text": piece}
+        except httpx.HTTPStatusError as e:
+            await e.response.aread()
+            log.error("[%s] OpenAI API error %d: %s", kind, e.response.status_code, e.response.text)
+            raise
+        finally:
+            heartbeat_stop.set()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
+            if bad_chunks:
+                log.warning("[%s] dropped %d malformed SSE chunks", kind, bad_chunks)
+

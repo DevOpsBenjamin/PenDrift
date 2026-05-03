@@ -24,11 +24,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import AsyncIterator
 
 from app.services import llm_activity
 from app.services.llm import _build_body, sse_completion, _get_lock
-from app.utils.grammars import NARRATIVE_GRAMMAR, QUERY_GRAMMAR
 
 log = logging.getLogger("pendrift.llm_stream")
 
@@ -52,21 +52,42 @@ class _StructuredParser:
     """
 
     # Default markers for the narrative grammar. Override via constructor.
-    _DEFAULT_MARKERS = [
-        ('"thinking":"', "thinking", True),    # inside string
-        (',"type":"', "type", True),
-        (',"narrative":"', "narrative", True),
-        (',"suggestions":', "suggestions", False),  # array (or "[]")
-    ]
+    # Each marker is (field_name, is_string_value).
+    _DEFAULT_TASK_MAP = {
+        "narrative": [
+            ("thinking", True),
+            ("type", True),
+            ("narrative", True),
+            ("suggestions", False),
+        ],
+        "query": [
+            ("thinking", True),
+            ("answer", True),
+        ]
+    }
 
-    def __init__(self, markers=None):
-        self._MARKERS = markers if markers is not None else self._DEFAULT_MARKERS
+    def __init__(self, kind="narrative", custom_markers=None):
         self.buffer = ""
         self.cursor = 0
         self.current_field: str | None = None
         self.in_string = False
         self.escape_pending = False
-        self._next_marker_idx = 0
+        self._next_field_idx = 0
+        
+        if custom_markers:
+            self._FIELDS = custom_markers
+        else:
+            self._FIELDS = self._DEFAULT_TASK_MAP.get(kind, self._DEFAULT_TASK_MAP["narrative"])
+
+    def _build_marker_regex(self, field_name: str, is_string_value: bool, is_first: bool) -> str:
+        """Build a regex to find the start of a field, allowing optional whitespace."""
+        # Escape the field name just in case
+        f = re.escape(f'"{field_name}"')
+        # Opening char: { for first field, , for subsequent
+        prefix = r'\{' if is_first else r','
+        # Value start: " for strings, nothing for arrays/objects
+        suffix = r'"' if is_string_value else ''
+        return rf'{prefix}\s*{f}\s*:\s*{suffix}'
 
     def push(self, delta: str) -> list[dict]:
         self.buffer += delta
@@ -74,7 +95,7 @@ class _StructuredParser:
 
         while True:
             if self.current_field is not None and self.in_string:
-                # Stream chars from the current string-valued field.
+                # ... same logic as before ...
                 while self.cursor < len(self.buffer):
                     ch = self.buffer[self.cursor]
                     if self.escape_pending:
@@ -84,14 +105,12 @@ class _StructuredParser:
                         self.cursor += 1
                         continue
                     if ch == "\\":
-                        # Possible escape — only consume if we have the next byte too
                         if self.cursor + 1 >= len(self.buffer):
                             return events
                         self.escape_pending = True
                         self.cursor += 1
                         continue
                     if ch == '"':
-                        # End of string-valued field
                         events.append({"type": f"{self.current_field}_done"})
                         self.in_string = False
                         self.current_field = None
@@ -100,25 +119,26 @@ class _StructuredParser:
                     events.append({"type": f"{self.current_field}_chunk", "text": ch})
                     self.cursor += 1
                 else:
-                    # Buffer fully consumed, still in string — wait for more
                     return events
                 continue
 
             # Looking for the next field marker
-            if self._next_marker_idx >= len(self._MARKERS):
+            if self._next_field_idx >= len(self._FIELDS):
                 return events
-            marker, field_name, is_string_value = self._MARKERS[self._next_marker_idx]
-            pos = self.buffer.find(marker, self.cursor)
-            if pos < 0:
+            
+            field_name, is_string_value = self._FIELDS[self._next_field_idx]
+            regex = self._build_marker_regex(field_name, is_string_value, self._next_field_idx == 0)
+            
+            match = re.search(regex, self.buffer[self.cursor:])
+            if not match:
                 return events
-            self.cursor = pos + len(marker)
-            self._next_marker_idx += 1
+                
+            self.cursor += match.end()
+            self._next_field_idx += 1
             self.current_field = field_name
             self.in_string = is_string_value
             events.append({"type": f"{field_name}_start"})
             if not is_string_value:
-                # `suggestions` is an array — we don't stream its content live;
-                # we'll parse it at the end. Mark current_field as None now.
                 self.current_field = None
 
 
@@ -136,9 +156,12 @@ async def stream_narrative(
     frequency_penalty: float | None = None,
     seed: int | None = None,
     session_id: str | None = None,
+    settings: dict | None = None,
 ) -> AsyncIterator[dict]:
     """Stream a grammar-constrained narrative as a sequence of semantic
     events. The final event is always either `done` or `error`."""
+    provider_name = (settings or {}).get("provider", "llama-server")
+    provider_config = (settings or {}).get("providerConfig", {}).get(provider_name, {})
     body = _build_body(
         messages,
         temperature=temperature, max_tokens=max_tokens,
@@ -147,13 +170,12 @@ async def stream_narrative(
         presence_penalty=presence_penalty,
         frequency_penalty=frequency_penalty,
         seed=seed,
-        grammar=NARRATIVE_GRAMMAR,
     )
 
     call = llm_activity.register("narrative", session_id)
     llm_activity.attach_task(call, asyncio.current_task())
 
-    parser = _StructuredParser()
+    parser = _StructuredParser(kind="narrative")
     full_buffer = ""
     usage: dict = {}
     model_name = ""
@@ -172,7 +194,7 @@ async def stream_narrative(
             llm_activity.mark_running(call)
             yield {"type": "started", "callId": call.id}
 
-            async for ev in sse_completion(body, activity_call=call, kind="narrative-stream"):
+            async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="narrative-stream"):
                 if ev["type"] == "delta":
                     piece = ev["text"]
                     full_buffer += piece
@@ -276,10 +298,7 @@ async def stream_narrative(
 
 
 # ── Query (Ask the Narrator) streaming ──────────────────
-_QUERY_MARKERS = [
-    ('"thinking":"', "thinking", True),
-    (',"answer":"', "answer", True),
-]
+# ── Query streaming ─────────────────────────────────────
 
 
 async def stream_query(
@@ -291,23 +310,25 @@ async def stream_query(
     top_k: int | None = None,
     seed: int | None = None,
     session_id: str | None = None,
+    settings: dict | None = None,
 ) -> AsyncIterator[dict]:
     """Stream an Ask-the-Narrator analytical Q&A. Emits:
       thinking_start, thinking_chunk{text}, thinking_done,
       answer_start, answer_chunk{text}, answer_done,
       done{result}, error{message}
     """
+    provider_name = (settings or {}).get("provider", "llama-server")
+    provider_config = (settings or {}).get("providerConfig", {}).get(provider_name, {})
     body = _build_body(
         messages,
         temperature=temperature, max_tokens=max_tokens,
         top_p=top_p, top_k=top_k, seed=seed,
-        grammar=QUERY_GRAMMAR,
     )
 
     call = llm_activity.register("query", session_id)
     llm_activity.attach_task(call, asyncio.current_task())
 
-    parser = _StructuredParser(markers=_QUERY_MARKERS)
+    parser = _StructuredParser(kind="query")
     full_buffer = ""
     usage: dict = {}
     model_name = ""
@@ -319,7 +340,7 @@ async def stream_query(
             llm_activity.mark_running(call)
             yield {"type": "started", "callId": call.id}
 
-            async for ev in sse_completion(body, activity_call=call, kind="query-stream"):
+            async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="query-stream"):
                 if ev["type"] == "delta":
                     piece = ev["text"]
                     full_buffer += piece

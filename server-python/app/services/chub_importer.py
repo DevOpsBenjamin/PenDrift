@@ -13,7 +13,6 @@ from app.services import llm_activity
 from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
 from app.services.job_manager import Job
 from app.services.prompts_registry import effective_prompt
-from app.utils.grammars import TEMPLATE_GRAMMAR
 
 log = logging.getLogger("pendrift.chub_import")
 
@@ -162,8 +161,8 @@ async def _llm_template_call(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            grammar=TEMPLATE_GRAMMAR,
             kind=kind,
+            settings=settings,
         )
         raw = result["raw"]
     else:
@@ -171,7 +170,6 @@ async def _llm_template_call(
             messages,
             temperature=temperature,
             max_tokens=max_tokens,
-            grammar=TEMPLATE_GRAMMAR,
         )
         call = llm_activity.register(kind, None)
         llm_activity.attach_task(call, asyncio.current_task())
@@ -182,7 +180,9 @@ async def _llm_template_call(
             async with _get_lock():
                 llm_activity.mark_running(call)
                 job.emit({"type": "llm_start", "kind": kind, "callId": call.id})
-                async for ev in sse_completion(body, activity_call=call, kind=kind):
+                provider_name = settings.get("provider", "llama-server")
+                provider_config = settings.get("providerConfig", {}).get(provider_name, {})
+                async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind=kind):
                     if ev["type"] == "delta":
                         full.append(ev["text"])
                     elif ev["type"] == "model":

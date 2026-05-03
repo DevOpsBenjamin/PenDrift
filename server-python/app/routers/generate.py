@@ -231,6 +231,7 @@ async def _generation_pipeline(
             frequency_penalty=settings.get("frequencyPenalty"),
             seed=settings.get("seed"),
             session_id=session_id,
+            settings=settings,
         ):
             if ev["type"] == "done":
                 result_for_save = ev["result"]
@@ -460,6 +461,7 @@ async def query_streaming(session_id: str, body: dict):
             top_k=settings.get("topK"),
             seed=settings.get("seed"),
             session_id=session_id,
+            settings=settings,
         ):
             yield _sse(ev)
 
@@ -604,6 +606,7 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
             frequency_penalty=settings.get("frequencyPenalty"),
             seed=settings.get("seed"),
             session_id=session_id,
+            settings=settings,
         ):
             if ev["type"] == "done":
                 result_for_save = ev["result"]

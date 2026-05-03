@@ -12,7 +12,6 @@ from app.services.llm import _build_body, _get_lock, generate_completion, sse_co
 from app.services.job_manager import Job
 from app.services.prompts import build_meta_analysis_messages
 from app.services.prompts_registry import effective_prompt
-from app.utils.grammars import META_GRAMMAR
 
 log = logging.getLogger("pendrift.meta")
 
@@ -68,9 +67,9 @@ async def run_meta_analysis(
                 messages,
                 temperature=0.2,
                 max_tokens=(settings.get("maxTokens", 4096)) * 2,
-                grammar=META_GRAMMAR,
                 kind="meta",
                 session_id=session_id,
+                settings=settings,
             )
             raw_response = response["raw"]
         else:
@@ -78,7 +77,6 @@ async def run_meta_analysis(
                 messages,
                 temperature=0.2,
                 max_tokens=(settings.get("maxTokens", 4096)) * 2,
-                grammar=META_GRAMMAR,
             )
             call = llm_activity.register("meta", session_id)
             llm_activity.attach_task(call, asyncio.current_task())
@@ -89,7 +87,9 @@ async def run_meta_analysis(
                 async with _get_lock():
                     llm_activity.mark_running(call)
                     job.emit({"type": "llm_start", "kind": "meta", "callId": call.id})
-                    async for ev in sse_completion(body, activity_call=call, kind="meta"):
+                    provider_name = settings.get("provider", "llama-server")
+                    provider_config = settings.get("providerConfig", {}).get(provider_name, {})
+                    async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="meta"):
                         if ev["type"] == "delta":
                             full.append(ev["text"])
                         elif ev["type"] == "model":

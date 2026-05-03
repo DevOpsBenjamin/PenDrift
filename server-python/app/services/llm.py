@@ -34,12 +34,8 @@ from app.services.providers import get_provider
 
 log = logging.getLogger("pendrift.llm")
 
-# ── Provider selection ──────────────────────────────────
-# Today: hardcoded to llama-server. To wire from settings later, replace
-# this with `get_provider(settings.get("provider", "llama-server"), **cfg)`
-# at each call site (or thread `provider_name` through the helpers below).
-import os
-_DEFAULT_PROVIDER = os.environ.get("LLM_PROVIDER", "llama-server")
+# Provider Selection
+# Provider is now dynamically selected based on the preset settings.
 
 # ── Serialization queue ─────────────────────────────────
 # Only one LLM call hits llama-server at a time. Lazy-init so module import
@@ -63,8 +59,6 @@ def _build_body(messages: list[dict], **kwargs) -> dict:
         v = kwargs.get(k)
         if v is not None:
             body[k] = v
-    if kwargs.get("grammar"):
-        body["grammar"] = kwargs["grammar"]
     return body
 
 
@@ -82,6 +76,8 @@ def _extract_usage(data: dict, duration_ms: int) -> dict:
 async def sse_completion(
     body: dict,
     *,
+    provider_name: str = "llama-server",
+    provider_kwargs: dict | None = None,
     activity_call=None,
     kind: str = "completion",
 ) -> AsyncIterator[dict]:
@@ -97,7 +93,8 @@ async def sse_completion(
     propagate (httpx errors, CancelledError, etc.) so the caller decides
     how to surface them.
     """
-    provider = get_provider(_DEFAULT_PROVIDER)
+    kwargs = provider_kwargs or {}
+    provider = get_provider(provider_name, **kwargs)
     async for event in provider.sse_completion(body, activity_call=activity_call, kind=kind):
         yield event
 
@@ -107,6 +104,8 @@ async def _buffered_completion(
     body: dict,
     activity_call,
     kind: str,
+    provider_name: str,
+    provider_kwargs: dict,
 ) -> tuple[dict, int]:
     """Consume `sse_completion` into a buffered response shaped like the
     non-streaming OpenAI completion. Returns (assembled, duration_ms)."""
@@ -115,7 +114,7 @@ async def _buffered_completion(
     model_name = ""
     start = time.monotonic()
 
-    async for ev in sse_completion(body, activity_call=activity_call, kind=kind):
+    async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_kwargs, activity_call=activity_call, kind=kind):
         if ev["type"] == "delta":
             content_pieces.append(ev["text"])
         elif ev["type"] == "model":
@@ -147,11 +146,11 @@ async def generate_completion(
     presence_penalty: float | None = None,
     frequency_penalty: float | None = None,
     seed: int | None = None,
-    grammar: str | None = None,
     kind: str = "completion",
     session_id: str | None = None,
+    settings: dict | None = None,
 ) -> dict:
-    """Generic grammar-constrained completion for utility calls (title gen,
+    """Generic structured completion for utility calls (title gen,
     chub import, meta-analysis, character consolidation).
 
     Callers `json.loads(result["raw"])` and pick their own fields.
@@ -170,9 +169,10 @@ async def generate_completion(
                 presence_penalty=presence_penalty,
                 frequency_penalty=frequency_penalty,
                 seed=seed,
-                grammar=grammar,
             )
-            data, duration_ms = await _buffered_completion(body, call, kind)
+            provider_name = (settings or {}).get("provider", "llama-server")
+            provider_config = (settings or {}).get("providerConfig", {}).get(provider_name, {})
+            data, duration_ms = await _buffered_completion(body, call, kind, provider_name, provider_config)
 
         raw_content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
         stats = _extract_usage(data, duration_ms)

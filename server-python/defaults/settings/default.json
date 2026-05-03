@@ -2,6 +2,11 @@
   "id": "default",
   "name": "Default",
   "isDefault": true,
+  "provider": "llama-server",
+  "providerConfig": {
+    "xai": { "model": "grok-beta", "baseUrl": "https://api.x.ai/v1" },
+    "openai": { "model": "gpt-4o-mini", "baseUrl": "https://api.openai.com/v1" }
+  },
   "modelPath": "",
   "gpuLayers": 99,
   "port": 8080,

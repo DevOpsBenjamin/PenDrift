@@ -17,6 +17,7 @@ import httpx
 
 from app.services import llm_activity
 from app.services.providers.base import ProgressLogger, start_heartbeat
+from app.utils.structured_outputs import STRUCTURED_OUTPUTS
 
 log = logging.getLogger("pendrift.providers.xai")
 
@@ -63,7 +64,16 @@ class XAIProvider:
             if k in body:
                 payload[k] = body[k]
 
-        if "grammar" in body:
+        if kind in STRUCTURED_OUTPUTS:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": kind,
+                    "strict": STRUCTURED_OUTPUTS[kind].get("strict", True),
+                    "schema": STRUCTURED_OUTPUTS[kind]["json_schema"],
+                },
+            }
+        elif "grammar" in body:
             log.warning("[%s] xAI provider does not support GBNF grammar. Dropping it.", kind)
 
         url = f"{self._base_url}/chat/completions"
