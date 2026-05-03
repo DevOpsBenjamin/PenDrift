@@ -50,11 +50,10 @@ class OpenAICompatibleProvider:
             "stream_options": {"include_usage": True},
         }
 
-        # Handle JSON mode if requested or if it's a structured call
+        # Force JSON mode for ALL PenDrift tasks
         if body.get("response_format"):
             payload["response_format"] = body["response_format"]
-        elif kind in ["chub-import", "meta", "query", "title", "consolidate", "narrative"]:
-            # Force JSON mode for all PenDrift structured tasks
+        else:
             payload["response_format"] = {"type": "json_object"}
 
         # Copy over sampling parameters if present
