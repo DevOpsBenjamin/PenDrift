@@ -3,6 +3,9 @@ import { createPinia } from 'pinia';
 import { createRouter, createWebHistory } from 'vue-router';
 import App from './App.vue';
 import './style.css';
+// Import for side effects only — wraps window.fetch + EventSource so we can
+// see in the console when the connection pool saturates.
+import './netDebug.js';
 
 const routes = [
   { path: '/', name: 'home', component: () => import('./views/HomeView.vue') },
