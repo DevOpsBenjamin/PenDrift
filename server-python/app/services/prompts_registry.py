@@ -20,6 +20,7 @@ from app.config import DATA_DIR
 log = logging.getLogger("pendrift.prompts")
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+# Note: app/prompts/*.md are being deprecated in favor of provider-specific defaults.
 
 _cache: dict[str, str] = {}
 
@@ -51,10 +52,14 @@ def list_prompts() -> list[dict]:
     return out
 
 
-def get_prompt(name: str) -> str | None:
-    """Return the bundled system prompt by name, or None if missing."""
-    _load()
-    return _cache.get(name)
+def get_prompt(name: str, provider_name: str = "llama-server") -> str | None:
+    """Return the default system prompt for the given provider and task kind."""
+    from app.services.providers import get_provider
+    try:
+        prov = get_provider(provider_name)
+        return prov.get_default_prompt(name)
+    except Exception:
+        return None
 
 
 def _override_key(name: str) -> str:
@@ -65,15 +70,16 @@ def _override_key(name: str) -> str:
     return f"{camel}Prompt"
 
 
-def effective_prompt(name: str, settings: dict) -> str:
-    """Return the override from settings if non-empty, else the bundled default.
+def effective_prompt(name: str, settings: dict, provider_name: str = "llama-server") -> str:
+    """Return the override from settings if non-empty, else the provider's default.
     Raises KeyError if neither exists."""
     override = settings.get(_override_key(name))
     if override and isinstance(override, str) and override.strip():
         return override
-    default = get_prompt(name)
+    
+    default = get_prompt(name, provider_name)
     if default is None:
-        raise KeyError(f"No bundled prompt named '{name}' and no override in settings")
+        raise KeyError(f"No default prompt for kind '{name}' in provider '{provider_name}' and no override in settings")
     return default
 
 

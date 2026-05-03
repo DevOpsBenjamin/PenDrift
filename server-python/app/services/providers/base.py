@@ -45,6 +45,9 @@ class LLMProvider(Protocol):
     ) -> AsyncIterator[dict]:
         ...
 
+    def get_default_prompt(self, kind: str) -> str:
+        ...
+
 
 # ── Shared helpers ──────────────────────────────────────
 def start_heartbeat(kind: str) -> tuple[asyncio.Event, asyncio.Task]:

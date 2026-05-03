@@ -157,5 +157,9 @@ class XAIProvider:
                 await hb_task
             except asyncio.CancelledError:
                 pass
+
+    def get_default_prompt(self, kind: str) -> str:
+        # Minimal placeholder for cloud providers
+        return f"You are a helpful assistant for {kind}."
             if bad_chunks:
                 log.warning("[%s] dropped %d malformed SSE chunks", kind, bad_chunks)

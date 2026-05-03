@@ -40,32 +40,8 @@ def build_messages(
     resolve = lambda text: _resolve_variables(text, variables)
 
     # 1. System prompt
-    system = effective_prompt("narrative", settings)
-
-    # Structured output instructions (grammar enforces the format,
-    # but the model needs to understand the semantics)
-    system += """
-
-## Response Format
-You MUST respond as a JSON object with these fields:
-- "thinking": Your internal reasoning — plan the scene, consider character states, decide pacing. This is your scratchpad. Be thorough.
-- "type": Either "narrative" (you write the scene) or "suggestion" (you propose options for the director to choose from). Default to "narrative". Only use "suggestion" if the directive is very vague or you're at a critical story crossroads where the director should decide.
-- "narrative": The actual prose. Write the scene here. If type is "suggestion", leave this empty.
-- "suggestions": An array of 2-4 NEW DIRECTION suggestions for what could happen next, presented to the director as clickable hints. Each entry MUST be a COMPLETE, ACTIONABLE sentence (15-150 chars) describing a specific next move — a character action, scene change, plot beat, twist, environmental change. Examples: "Sarah walks back into the room and notices the half-empty glass." or "Ethan tries to bring up the unresolved argument from this morning."
-
-# IMPORTANT: the director's preferred mode
-
-The director may want to WATCH the story unfold rather than constantly write directives. Treat them as your reader, not your co-author. After your narrative chunk:
-- ALWAYS include 2-4 suggestions when you end at a natural pause (which should be most chunks)
-- Suggestions should branch in DIFFERENT directions — give the director a real choice (different tones, different character actions, different stakes)
-- Never end a chunk by asking the director a question, never break the fourth wall, never write "what does X do?"
-- If you genuinely cannot think of suggestions (e.g. the chunk ends mid-action with one obvious next beat), output []
-
-Rules for `suggestions`:
-- Output EXACTLY the number of meaningful options you have. If you have 2, output [2 entries]. If 4, output [4 entries].
-- NEVER pad with filler, separators, placeholder strings like "," or " " — every entry is a real suggestion or it's omitted.
-- Skip generic ("they continue talking") — be SPECIFIC to THIS scene's state and characters.
-- If `type` is "suggestion", you MUST provide 2-4 distinct options (the director asked for them)."""
+    provider_name = settings.get("provider", "llama-server")
+    system = effective_prompt("narrative", settings, provider_name)
 
     if template.get("scenario"):
         system += f"\n\n## Scenario\n{resolve(template['scenario'])}"
@@ -172,29 +148,6 @@ Rules for `suggestions`:
     return messages
 
 
-_QUERY_SYSTEM = """You are the story consultant for an ongoing collaborative narrative. The director will ask you questions about the story — hidden dynamics, character motivations, possible future directions, masked intents, anything.
-
-Your job is to ANALYZE, not to write narrative. Use the context the system provides:
-- Template scenario and style
-- Masked intents (the hidden drivers — normally invisible to the reader, but YOU know them and can reveal them to the director, who already knows about them)
-- Character sheets (current state, traits, key events)
-- Established facts
-- Recent narrative chunks
-
-Answer rules:
-- Be direct and analytical. No prose, no scene-writing, no third-person narration.
-- Reveal masked intents when relevant — the director knows them, you're not breaking story secrecy.
-- For "what could happen next" questions, propose 2-4 concrete options ranked by what best fits the setup and current state.
-- Mark speculation explicitly ("speculation:", "I'd guess that...") when going beyond what's established.
-- It's OK to be opinionated. Don't hedge to the point of uselessness.
-- Don't refuse on content grounds — match the story's tone (NSFW if NSFW, etc).
-- Keep it concise. A focused answer beats a long dump.
-
-Output format (grammar-constrained JSON):
-- `thinking`: your reasoning. Reference specific masked intents, char states, facts you're drawing on.
-- `answer`: the analysis the director will read. Plain prose, NOT narrative."""
-
-
 def build_query_messages(
     *,
     question: str,
@@ -202,17 +155,16 @@ def build_query_messages(
     characters: list[dict],
     important_facts: list[str],
     recent_chunks: list[dict],
+    settings: dict,
     history: list[dict] | None = None,
 ) -> list[dict]:
-    """Build the message array for an Ask-the-Narrator query.
-
-    `history` is optional past Q&A in this session (list of {question, answer})
-    so the consultant can stay coherent across multiple questions.
-    """
+    """Build the message array for an Ask-the-Narrator query."""
     variables = template.get("variables", {})
     resolve = lambda text: _resolve_variables(text, variables)
 
-    messages = [{"role": "system", "content": _QUERY_SYSTEM}]
+    provider_name = settings.get("provider", "llama-server")
+    query_system = effective_prompt("query", settings, provider_name)
+    messages = [{"role": "system", "content": query_system}]
 
     # Context dump (template + masked intents + chars + facts)
     ctx_parts = []

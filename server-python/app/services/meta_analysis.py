@@ -53,7 +53,7 @@ async def run_meta_analysis(
         characters=characters,
         recent_chunks=recent_chunks,
         important_facts=important_facts,
-        meta_prompt=effective_prompt("meta", settings),
+        meta_prompt=effective_prompt("meta", settings, settings.get("provider", "llama-server")),
         previous_meta_results=previous_meta,
     )
 

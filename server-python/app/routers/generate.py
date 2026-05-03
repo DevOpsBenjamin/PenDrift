@@ -423,6 +423,7 @@ async def query_streaming(session_id: str, body: dict):
         characters=characters,
         important_facts=facts,
         recent_chunks=recent_chunks,
+        settings=settings,
         history=history,
     )
 
