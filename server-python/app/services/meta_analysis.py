@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from app.database import get_db
 from app.services import llm_activity
-from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
+from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
 from app.services.job_manager import Job
 from app.services.prompts import build_meta_analysis_messages
 from app.services.prompts_registry import effective_prompt
@@ -89,7 +89,7 @@ async def run_meta_analysis(
                 async with _get_lock():
                     llm_activity.mark_running(call)
                     job.emit({"type": "llm_start", "kind": "meta", "callId": call.id})
-                    async for ev in llama_sse_completion(body, activity_call=call, kind="meta"):
+                    async for ev in sse_completion(body, activity_call=call, kind="meta"):
                         if ev["type"] == "delta":
                             full.append(ev["text"])
                         elif ev["type"] == "model":

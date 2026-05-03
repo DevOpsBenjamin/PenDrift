@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from app.database import get_db
 from app.services import job_manager, llm_activity
 from app.services.job_manager import Job
-from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
+from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
 from app.services.meta_analysis import run_meta_analysis
 from app.utils.grammars import CONSOLIDATE_GRAMMAR
 
@@ -195,7 +195,7 @@ Return JSON: put your reasoning in `thinking`, then the compressed data:
             async with _get_lock():
                 llm_activity.mark_running(call)
                 j.emit({"type": "llm_start", "kind": "consolidate", "callId": call.id})
-                async for ev in llama_sse_completion(body, activity_call=call, kind="consolidate"):
+                async for ev in sse_completion(body, activity_call=call, kind="consolidate"):
                     if ev["type"] == "delta":
                         full.append(ev["text"])
                     elif ev["type"] == "model":

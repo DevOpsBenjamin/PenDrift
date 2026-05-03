@@ -16,7 +16,7 @@ Event types yielded:
   error{message}
 
 Plumbing (httpx, SSE parsing, heartbeat, first-token timing, periodic
-progress logging) lives in `services/llm.py::llama_sse_completion`. This
+progress logging) lives in `services/llm.py::sse_completion`. This
 file only concerns itself with grammar-aware parsing and event emission.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ import logging
 from typing import AsyncIterator
 
 from app.services import llm_activity
-from app.services.llm import _build_body, llama_sse_completion, _get_lock
+from app.services.llm import _build_body, sse_completion, _get_lock
 from app.utils.grammars import NARRATIVE_GRAMMAR, QUERY_GRAMMAR
 
 log = logging.getLogger("pendrift.llm_stream")
@@ -172,7 +172,7 @@ async def stream_narrative(
             llm_activity.mark_running(call)
             yield {"type": "started", "callId": call.id}
 
-            async for ev in llama_sse_completion(body, activity_call=call, kind="narrative-stream"):
+            async for ev in sse_completion(body, activity_call=call, kind="narrative-stream"):
                 if ev["type"] == "delta":
                     piece = ev["text"]
                     full_buffer += piece
@@ -319,7 +319,7 @@ async def stream_query(
             llm_activity.mark_running(call)
             yield {"type": "started", "callId": call.id}
 
-            async for ev in llama_sse_completion(body, activity_call=call, kind="query-stream"):
+            async for ev in sse_completion(body, activity_call=call, kind="query-stream"):
                 if ev["type"] == "delta":
                     piece = ev["text"]
                     full_buffer += piece

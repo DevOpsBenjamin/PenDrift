@@ -7,7 +7,7 @@ import logging
 
 from app.database import get_db
 from app.services import llm_activity
-from app.services.llm import _build_body, _get_lock, generate_completion, llama_sse_completion
+from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
 from app.services.job_manager import Job
 from app.utils.grammars import TITLE_GRAMMAR
 
@@ -93,7 +93,7 @@ async def generate_chapter_title(
                 async with _get_lock():
                     llm_activity.mark_running(call)
                     job.emit({"type": "llm_start", "kind": "title", "callId": call.id})
-                    async for ev in llama_sse_completion(body, activity_call=call, kind="title"):
+                    async for ev in sse_completion(body, activity_call=call, kind="title"):
                         if ev["type"] == "delta":
                             full.append(ev["text"])
                         elif ev["type"] == "model":
