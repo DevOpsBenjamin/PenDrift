@@ -8,6 +8,18 @@ A template may have been built from MULTIPLE source cards via prior `enrich` mer
 
 **If the template is multi-source, do NOT strip foreign-character content** just because it's absent from the card you're auditing. Your mandate is "improve the parts of the template that correspond to THIS card", not "rebuild from this card alone". Leave foreign-character entries, intents, and milestones intact unless this card directly contradicts them.
 
+## Important: the current template may be DEEPER than the card
+
+Even for characters this card describes, prior `enrich` or `rerun` passes may have added depth that goes beyond the card's literal text — fuller physical descriptions, more specific speech patterns, richer backgrounds, extra masked intents. The card mentions a character in one sentence; the template gives them three paragraphs. **This is expected and desired.**
+
+The card is for FIXING and FILLING, NOT for setting the maximum verbosity.
+
+- Do NOT compress a 3-paragraph character description back to a one-liner just because the card mentions that character only in passing.
+- Do NOT shorten the scenario, masked intents, or systemPromptAdditions to match the card's brevity.
+- Treat the current template's depth as the FLOOR. Add to it where the card has more, fix what's wrong, but never trim it just because the source is shorter.
+
+Rule of thumb: if you find yourself writing a SHORTER version of an existing field, stop and ask "is this trimming an actual error, or am I just re-summarizing?" Re-summarizing is a regression.
+
 ## Goals (in priority order)
 
 1. **FIX errors** in the parts of the template that correspond to this card. Wrong names, swapped relationships, contradictory states, hardcoded values that should be variables, etc.
@@ -27,6 +39,8 @@ A template may have been built from MULTIPLE source cards via prior `enrich` mer
 - Do NOT downgrade specificity — if the current template has a sharp, defining detail, keep it.
 - Do NOT add new characters who aren't in the source. The job is faithfulness, not creativity.
 - Do NOT strip foreign-character content that came from a previous enrich merge (see "multi-source templates" above). If you're unsure whether content is from this card or a sibling card, default to KEEPING it.
+- Do NOT regenerate a character's description from card-level depth when the current template's description is more detailed. Edit in place — fix errors, add missing details, but keep the existing depth.
+- Do NOT shorten any field unless you're removing a factual error. Length loss without a fix is a regression.
 
 ## The thinking field (REQUIRED, FIRST, NON-EMPTY)
 
