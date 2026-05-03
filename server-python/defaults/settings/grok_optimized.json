@@ -13,13 +13,5 @@
   "thinkingTokens": 1500,
   "narrativeTokens": 800,
   "suggestionTokens": 200,
-  "chunkUpdateInterval": 10,
-  "narrativePrompt": "<REPLACE WITH GROK PROMPT>",
-  "metaPrompt": "<REPLACE WITH GROK PROMPT>",
-  "queryPrompt": "<REPLACE WITH GROK PROMPT>",
-  "titlePrompt": "<REPLACE WITH GROK PROMPT>",
-  "consolidatePrompt": "<REPLACE WITH GROK PROMPT>",
-  "templatePrompt": "<REPLACE WITH GROK PROMPT>",
-  "rerunPrompt": "<REPLACE WITH GROK PROMPT>",
-  "enrichPrompt": "<REPLACE WITH GROK PROMPT>"
+  "chunkUpdateInterval": 10
 }

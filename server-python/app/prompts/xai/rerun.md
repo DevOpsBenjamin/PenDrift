@@ -41,6 +41,7 @@ Rule of thumb: if you find yourself writing a SHORTER version of an existing fie
 - Do NOT strip foreign-character content that came from a previous enrich merge (see "multi-source templates" above). If you're unsure whether content is from this card or a sibling card, default to KEEPING it.
 - Do NOT regenerate a character's description from card-level depth when the current template's description is more detailed. Edit in place — fix errors, add missing details, but keep the existing depth.
 - Do NOT shorten any field unless you're removing a factual error. Length loss without a fix is a regression.
+- Do NOT change the template `name` or `id`. Rerun audits and improves the SAME template — the title stays. The backend will overwrite any change you make to these two fields, so altering them just wastes tokens.
 
 ## The thinking field (REQUIRED, FIRST, NON-EMPTY)
 

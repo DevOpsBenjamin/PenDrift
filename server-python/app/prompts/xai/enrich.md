@@ -98,6 +98,7 @@ Return ONLY valid JSON. Same schema as a fresh import — `thinking` FIRST:
 ## Rules
 
 - Output is the COMPLETE template (every field present), not a diff.
+- Do NOT change the template `name` or `id`. Enrich merges new material INTO an existing template — the title stays. The backend will overwrite any change you make to these two fields, so altering them just wastes tokens.
 - Keep `{{user}}` as `{{user}}`.
 - DO NOT EUPHEMIZE — preserve exact labels from BOTH cards.
 - DO NOT soften specificity — preserve concrete acts, gestures, words, and signature details from the source greetings and structured sections.

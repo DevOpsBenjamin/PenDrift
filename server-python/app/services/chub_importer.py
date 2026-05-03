@@ -232,7 +232,12 @@ async def enrich_with_new_card(
         messages, settings, kind="enrich", job=job,
         temperature=temperature, max_tokens=max_tokens,
     )
+    # Pin id and name to the existing template — enrich never renames or
+    # re-ids the template it's merging into (the model sometimes regenerates
+    # the title from the new card alone, which is wrong for a merge).
     template["id"] = current_template.get("id") or template.get("id")
+    if current_template.get("name"):
+        template["name"] = current_template["name"]
     return template
 
 
@@ -267,8 +272,12 @@ async def rerun_with_current(
         messages, settings, kind="rerun", job=job,
         temperature=temperature, max_tokens=max_tokens,
     )
-    # Preserve the existing template id — rerun improves the same template
+    # Pin id and name to the existing template — rerun is an audit/improve
+    # pass on the SAME template, so the title shouldn't drift even if the
+    # model decides the focus has shifted.
     template["id"] = current_template.get("id") or template.get("id")
+    if current_template.get("name"):
+        template["name"] = current_template["name"]
     return template
 
 
