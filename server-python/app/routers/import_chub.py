@@ -96,7 +96,8 @@ async def import_from_chub(body: dict):
     from app.routers.presets import find_default_preset_id
     url = body.get("url")
     raw_card = body.get("card")
-    preset_id = body.get("settingsPresetId") or find_default_preset_id()
+    preset_arg = body.get("settingsPresetId")
+    preset_id = preset_arg if (preset_arg and preset_arg != "default") else find_default_preset_id()
 
     if not url and not raw_card:
         raise HTTPException(400, "Provide 'url' (chub.ai link) or 'card' (raw JSON)")
@@ -134,7 +135,8 @@ async def import_from_json_upload(body: dict):
         raise HTTPException(400, "Provide 'card' with the character card JSON")
 
     from app.routers.presets import find_default_preset_id
-    preset_id = body.get("settingsPresetId") or find_default_preset_id()
+    preset_arg = body.get("settingsPresetId")
+    preset_id = preset_arg if (preset_arg and preset_arg != "default") else find_default_preset_id()
     settings = _load_settings(preset_id)
 
     card = _normalize_card(card_data) if isinstance(card_data, dict) else _normalize_card(json.loads(card_data))

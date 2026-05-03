@@ -97,7 +97,10 @@ async def trigger_meta(session_id: str, body: dict):
         raise HTTPException(404, "Session not found")
 
     from app.config import DATA_DIR
-    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{session_row[0][0]}.json").read_text(encoding="utf-8"))
+    from app.routers.presets import find_default_preset_id
+    raw_preset_id = session_row[0][0]
+    eff_id = raw_preset_id if (raw_preset_id and raw_preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
 
     chunks = []
     if chapter_id:
@@ -136,7 +139,10 @@ async def consolidate(session_id: str):
         raise HTTPException(404, "Session not found")
 
     from app.config import DATA_DIR
-    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{session_row[0][0]}.json").read_text(encoding="utf-8"))
+    from app.routers.presets import find_default_preset_id
+    raw_preset_id = session_row[0][0]
+    eff_id = raw_preset_id if (raw_preset_id and raw_preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
 
     char_rows = await db.execute_fetchall(
         "SELECT name, current_state, traits, key_events FROM characters WHERE session_id = ?", (session_id,)

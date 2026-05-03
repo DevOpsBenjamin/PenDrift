@@ -74,7 +74,10 @@ async def finalize_chapter(session_id: str, body: dict):
     # Load settings
     session_row = await db.execute_fetchall("SELECT settings_preset_id FROM sessions WHERE id = ?", (session_id,))
     from app.config import DATA_DIR
-    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{session_row[0][0]}.json").read_text(encoding="utf-8"))
+    from app.routers.presets import find_default_preset_id
+    raw_preset_id = session_row[0][0] if session_row else None
+    eff_id = raw_preset_id if (raw_preset_id and raw_preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
 
     # Load chunks
     chunk_rows = await db.execute_fetchall(
@@ -142,7 +145,10 @@ async def regen_title(session_id: str, chapter_id: str):
 
     session_row = await db.execute_fetchall("SELECT settings_preset_id FROM sessions WHERE id = ?", (session_id,))
     from app.config import DATA_DIR
-    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{session_row[0][0]}.json").read_text(encoding="utf-8"))
+    from app.routers.presets import find_default_preset_id
+    raw_preset_id = session_row[0][0] if session_row else None
+    eff_id = raw_preset_id if (raw_preset_id and raw_preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
 
     chunk_rows = await db.execute_fetchall(
         'SELECT id, chapter_id, "order", active_version, versions FROM chunks WHERE chapter_id = ? ORDER BY "order"',
