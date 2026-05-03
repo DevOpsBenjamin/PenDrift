@@ -103,11 +103,37 @@ async def get_db() -> aiosqlite.Connection:
 
 
 async def init_db():
+    await _backup_db()
     db = await get_db()
     await db.executescript(SCHEMA)
     await _migrate_columns(db)
     await db.commit()
     _seed_defaults()
+
+
+async def _backup_db():
+    if not DB_PATH.is_file():
+        return
+    import datetime
+    
+    backups_dir = DATA_DIR / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    
+    today = datetime.date.today().isoformat()
+    backup_file = backups_dir / f"pendrift_{today}.db"
+    
+    if not backup_file.exists():
+        # Copy the database
+        shutil.copy2(DB_PATH, backup_file)
+        
+        # Keep only the 7 most recent backups
+        backups = sorted(backups_dir.glob("pendrift_*.db"))
+        if len(backups) > 7:
+            for old_backup in backups[:-7]:
+                try:
+                    old_backup.unlink()
+                except OSError:
+                    pass
 
 
 async def _migrate_columns(db: aiosqlite.Connection):
