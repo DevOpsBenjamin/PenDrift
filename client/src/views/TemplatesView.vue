@@ -444,7 +444,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useSettingsStore } from '../stores/settings.js';
 import { useJobsStore } from '../stores/jobs.js';
 import * as templatesApi from '../api/templates.js';
@@ -589,10 +589,13 @@ async function deleteSource(filename) {
   }
 }
 
-// jobId → {busyRef, sourceRef, label, templateId} so the global watch on
-// jobs.jobs (already wired further down for chub-import) can also clear our
-// local "busy" state and refresh the editor when a rerun/enrich finishes.
-const pendingTemplateOpJobs = ref({});
+// Track the rerun/enrich jobs we kicked off here so we can:
+//  - clear the local "busy" UI state when they finish
+//  - refresh the editor with the new version if the user is still on it
+// Plain Map (not a Vue ref) because it's accessed only inside the watch
+// handler — no reactivity needed and avoids any subtle proxy-vs-mutation gotcha.
+const templateOpContexts = new Map();   // jobId → {busyRef, sourceRef, label, templateId}
+const seenTerminalTemplateOps = new Set();  // jobIds we've already processed
 
 async function _runLlmOnSource(apiCall, filename, busyRef, sourceRef, label) {
   if (!editing.value || llmBusy.value) return;
@@ -601,13 +604,12 @@ async function _runLlmOnSource(apiCall, filename, busyRef, sourceRef, label) {
   try {
     const presetId = store.defaultPresetId();
     const res = await apiCall(editing.value.id, filename, presetId);
-    if (res?.jobId) {
-      pendingTemplateOpJobs.value[res.jobId] = {
-        busyRef, sourceRef, label, templateId: editing.value.id,
-      };
-    } else {
+    if (!res?.jobId) {
       throw new Error('Backend did not return a jobId');
     }
+    templateOpContexts.set(res.jobId, {
+      busyRef, sourceRef, label, templateId: editing.value.id,
+    });
   } catch (err) {
     window.alert(`${label} failed: ` + (err.message || err));
     busyRef.value = false;
@@ -616,13 +618,14 @@ async function _runLlmOnSource(apiCall, filename, busyRef, sourceRef, label) {
 }
 
 watch(() => jobs.jobs, async (current) => {
-  for (const jobId of Object.keys(pendingTemplateOpJobs.value)) {
-    const j = current.find(x => x.id === jobId);
-    if (!j) continue;
+  for (const j of current) {
+    if (!templateOpContexts.has(j.id)) continue;
+    if (seenTerminalTemplateOps.has(j.id)) continue;
     if (j.status !== 'done' && j.status !== 'cancelled' && j.status !== 'error') continue;
 
-    const ctx = pendingTemplateOpJobs.value[jobId];
-    delete pendingTemplateOpJobs.value[jobId];
+    seenTerminalTemplateOps.add(j.id);
+    const ctx = templateOpContexts.get(j.id);
+    templateOpContexts.delete(j.id);
     if (ctx) {
       ctx.busyRef.value = false;
       ctx.sourceRef.value = null;
@@ -634,8 +637,8 @@ watch(() => jobs.jobs, async (current) => {
     }
     if (j.status !== 'done') continue;
 
-    // Refresh the editor with the new version, but only if the user is still
-    // looking at this template. App.vue handles the sidebar refresh globally.
+    // Refresh the editor with the new version if the user is still on this
+    // template. App.vue handles the sidebar refresh globally.
     if (editing.value && ctx && editing.value.id === ctx.templateId) {
       try {
         const tpl = await templatesApi.getTemplate(ctx.templateId);
@@ -721,11 +724,17 @@ function formatDate(iso) {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
+// Bumped only when the user uploads/removes an image. Without this, evaluating
+// Date.now() inside imgUrl during every reactive re-render generated a fresh
+// URL per render for every card, saturating the browser's HTTP/1.1 connection
+// pool and starving JS chunk + activity polling fetches.
+const imageBumps = reactive(new Map());
+
 function imgUrl(template) {
-  // The base URL already cache-busts via ?v=<coverImage>, but on upload-replace
-  // the field name doesn't change, so we add a session-scoped timestamp.
   const base = templatesApi.templateImageUrl(template);
-  return base ? `${base}&t=${Date.now()}` : null;
+  if (!base) return null;
+  const bump = imageBumps.get(template.id);
+  return bump ? `${base}&t=${bump}` : base;
 }
 
 async function onImageChosen(event) {
@@ -739,6 +748,7 @@ async function onImageChosen(event) {
       // Reflect into the store list too
       const idx = store.templates.findIndex(t => t.id === editing.value.id);
       if (idx >= 0) store.templates[idx].coverImage = res.template.coverImage;
+      imageBumps.set(editing.value.id, Date.now());
     }
   } catch (err) {
     window.alert('Image upload failed: ' + (err.message || err));
@@ -756,6 +766,7 @@ async function removeImage() {
     editing.value.coverImage = null;
     const idx = store.templates.findIndex(t => t.id === editing.value.id);
     if (idx >= 0) delete store.templates[idx].coverImage;
+    imageBumps.delete(editing.value.id);
   } catch (err) {
     window.alert('Could not remove image: ' + (err.message || err));
   } finally {
