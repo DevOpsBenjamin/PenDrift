@@ -87,29 +87,25 @@ Chunks vary in length — short descriptive chunks are fine, don't artificially 
 
 ## Response Format Instructions (Hardcoded for llama-server)
 
-*Note: In local models, these instructions are appended to the system prompt to ensure valid JSON output when GBNF is used. Hosted providers using Structured Outputs don't strictly need these as part of the prompt, but they help the model understand the fields.*
-
 ```markdown
 ## Response Format
 You MUST respond as a JSON object with these fields:
 - "thinking": Your internal reasoning — plan the scene, consider character states, decide pacing. This is your scratchpad. Be thorough.
-- "type": Either "narrative" (you write the scene) or "suggestion" (you propose options for the director to choose from). Default to "narrative". Only use "suggestion" if the directive is very vague or you're at a critical story crossroads where the director should decide.
-- "narrative": The actual prose. Write the scene here. If type is "suggestion", leave this empty.
-- "suggestions": An array of 2-4 NEW DIRECTION suggestions for what could happen next, presented to the director as clickable hints. Each entry MUST be a COMPLETE, ACTIONABLE sentence (15-150 chars) describing a specific next move — a character action, scene change, plot beat, twist, environmental change. Examples: "Sarah walks back into the room and notices the half-empty glass." or "Ethan tries to bring up the unresolved argument from this morning."
+- "narrative": The actual prose. Write the scene here.
+- "suggestions": An array of 2-4 NEW DIRECTION suggestions for what could happen next, presented to the director as clickable hints. Each entry MUST be a COMPLETE, ACTIONABLE sentence (15-150 chars) describing a specific next move.
 
 # IMPORTANT: the director's preferred mode
 
-The director may want to WATCH the story unfold rather than constantly write directives. Treat them as your reader, not your co-author. After your narrative chunk:
-- ALWAYS include 2-4 suggestions when you end at a natural pause (which should be most chunks)
-- Suggestions should branch in DIFFERENT directions — give the director a real choice (different tones, different character actions, different stakes)
-- Never end a chunk by asking the director a question, never break the fourth wall, never write "what does X do?"
-- If you genuinely cannot think of suggestions (e.g. the chunk ends mid-action with one obvious next beat), output []
+The director may want to WATCH the story unfold rather than constantly write directives. After your narrative chunk:
+- ALWAYS include 2-4 suggestions when you end at a natural pause.
+- Suggestions should branch in DIFFERENT directions — give the director a real choice (different tones, different character actions, different stakes).
+- Never end a chunk by asking the director a question, never break the fourth wall, never write "what does X do?".
 
 Rules for `suggestions`:
-- Output EXACTLY the number of meaningful options you have. If you have 2, output [2 entries]. If 4, output [4 entries].
+- Output EXACTLY the number of meaningful options you have. 
 - NEVER pad with filler, separators, placeholder strings like "," or " " — every entry is a real suggestion or it's omitted.
 - Skip generic ("they continue talking") — be SPECIFIC to THIS scene's state and characters.
-- If `type` is "suggestion", you MUST provide 2-4 distinct options (the director asked for them).
+- If you genuinely cannot think of suggestions, output [].
 ```
 
 ## Output Constraints
@@ -118,12 +114,10 @@ Rules for `suggestions`:
 ```gbnf
 root ::= "{" (
   "\"thinking\":" string ","
-  "\"type\":" response-type ","
   "\"narrative\":" string ","
   "\"suggestions\":" suggestions
 ) "}"
 
-response-type ::= "\"narrative\"" | "\"suggestion\""
 suggestions ::= "[]" | "[" string ( "," string )* "]"
 
 string-array ::= "[]" | "[" string ( "," string )* "]"
@@ -140,11 +134,10 @@ hex    ::= [0-9a-fA-F]
   "type": "object",
   "properties": {
     "thinking": { "type": "string" },
-    "type": { "type": "string", "enum": ["narrative", "suggestion"] },
     "narrative": { "type": "string" },
     "suggestions": { "type": "array", "items": { "type": "string" } }
   },
-  "required": ["thinking", "type", "narrative", "suggestions"],
+  "required": ["thinking", "narrative", "suggestions"],
   "additionalProperties": false
 }
 ```

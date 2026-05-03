@@ -22,23 +22,20 @@ STRUCTURED_OUTPUTS = {
         "gbnf": r'''
 root ::= "{" (
   "\"thinking\":" string ","
-  "\"type\":" response-type ","
   "\"narrative\":" string ","
   "\"suggestions\":" suggestions
 ) "}"
 
-response-type ::= "\"narrative\"" | "\"suggestion\""
 suggestions ::= "[]" | "[" string ( "," string )* "]"
 ''' + _SHARED_GBNF,
         "json_schema": {
             "type": "object",
             "properties": {
                 "thinking": { "type": "string" },
-                "type": { "type": "string", "enum": ["narrative", "suggestion"] },
                 "narrative": { "type": "string" },
                 "suggestions": { "type": "array", "items": { "type": "string" } }
             },
-            "required": ["thinking", "type", "narrative", "suggestions"],
+            "required": ["thinking", "narrative", "suggestions"],
             "additionalProperties": False
         }
     },

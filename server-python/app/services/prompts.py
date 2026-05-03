@@ -43,6 +43,29 @@ def build_messages(
     provider_name = settings.get("provider", "llama-server")
     system = effective_prompt("narrative", settings, provider_name)
 
+    # Structured output instructions (grammar enforces the format,
+    # but the model needs to understand the semantics)
+    system += """
+
+## Response Format
+You MUST respond as a JSON object with these fields:
+- "thinking": Your internal reasoning — plan the scene, consider character states, decide pacing. This is your scratchpad. Be thorough.
+- "narrative": The actual prose. Write the scene here.
+- "suggestions": An array of 2-4 NEW DIRECTION suggestions for what could happen next, presented to the director as clickable hints. Each entry MUST be a COMPLETE, ACTIONABLE sentence (15-150 chars) describing a specific next move.
+
+# IMPORTANT: the director's preferred mode
+
+The director may want to WATCH the story unfold rather than constantly write directives. After your narrative chunk:
+- ALWAYS include 2-4 suggestions when you end at a natural pause.
+- Suggestions should branch in DIFFERENT directions — give the director a real choice (different tones, different character actions, different stakes).
+- Never end a chunk by asking the director a question, never break the fourth wall, never write "what does X do?".
+
+Rules for `suggestions`:
+- Output EXACTLY the number of meaningful options you have. 
+- NEVER pad with filler, separators, placeholder strings like "," or " " — every entry is a real suggestion or it's omitted.
+- Skip generic ("they continue talking") — be SPECIFIC to THIS scene's state and characters.
+- If you genuinely cannot think of suggestions, output []."""
+
     if template.get("scenario"):
         system += f"\n\n## Scenario\n{resolve(template['scenario'])}"
 
