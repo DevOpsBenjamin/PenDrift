@@ -73,6 +73,24 @@ def _provider_from_settings(settings: dict | None) -> tuple[str, dict]:
     return name, config
 
 
+def _merge_reasoning_into_json(content: str, reasoning: str) -> tuple[str, bool]:
+    """Inject `reasoning_content` into the JSON content's `thinking` field
+    when the provider streamed CoT separately (Grok / o-series pattern) and
+    the JSON output didn't already contain a `thinking` key.
+
+    Returns (possibly-modified content, True if injection happened)."""
+    if not reasoning or not content.strip().startswith("{"):
+        return content, False
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return content, False
+    if parsed.get("thinking"):
+        return content, False
+    merged = {"thinking": reasoning, **parsed}
+    return json.dumps(merged, ensure_ascii=False, indent=2), True
+
+
 async def _ensure_provider_ready(
     settings: dict | None,
     *,
@@ -159,6 +177,7 @@ async def run_llm_stream(
     llm_activity.attach_task(call, asyncio.current_task())
 
     full: list[str] = []
+    thinking_pieces: list[str] = []
     usage: dict = {}
     model_name = ""
     start = time.monotonic()
@@ -181,6 +200,8 @@ async def run_llm_stream(
         ):
             if ev["type"] == "delta":
                 full.append(ev["text"])
+            elif ev["type"] == "thinking_delta":
+                thinking_pieces.append(ev["text"])
             elif ev["type"] == "model":
                 model_name = ev["name"]
             elif ev["type"] == "usage":
@@ -189,14 +210,22 @@ async def run_llm_stream(
 
         duration_ms = int((time.monotonic() - start) * 1000)
         raw = "".join(full)
+        reasoning = "".join(thinking_pieces)
+        # Merge CoT (reasoning_content) into the JSON's `thinking` field BEFORE
+        # mark_done so the activity dump captures the full picture.
+        raw, injected = _merge_reasoning_into_json(raw, reasoning)
+        if injected:
+            log.info("[%s] injected reasoning_content into JSON 'thinking' field", kind)
         stats = _extract_usage(usage, duration_ms)
         llm_activity.mark_done(call, stats=stats, model=model_name, raw_response=raw)
         yield {"type": "llm_done", "stats": stats, "modelName": model_name, "raw": raw}
     except asyncio.CancelledError:
-        llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
+        partial, _ = _merge_reasoning_into_json("".join(full), "".join(thinking_pieces))
+        llm_activity.mark_done(call, error="cancelled", raw_response=partial or None)
         raise
     except Exception as e:
-        llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
+        partial, _ = _merge_reasoning_into_json("".join(full), "".join(thinking_pieces))
+        llm_activity.mark_done(call, error=str(e), raw_response=partial or None)
         raise
 
 
@@ -215,43 +244,23 @@ async def run_llm_buffered(
 
     Returns: {"raw": str, "stats": dict, "modelName": str}.
 
-    The `raw` string may have its `thinking` field injected from
-    `reasoning_content` if the provider emitted CoT separately and the JSON
-    output didn't already contain one (Grok / OpenAI o-series pattern)."""
-    full: list[str] = []
-    thinking_pieces: list[str] = []
+    The `raw` already has its `thinking` field merged from `reasoning_content`
+    when applicable — that injection happens inside `run_llm_stream` before
+    activity mark_done, so the activity dump and this return value match."""
+    raw = ""
     stats: dict = {}
     model_name = ""
 
     async for ev in run_llm_stream(
         messages, settings=settings, kind=kind, session_id=session_id, **sampling
     ):
-        if ev["type"] == "delta":
-            full.append(ev["text"])
-        elif ev["type"] == "thinking_delta":
-            thinking_pieces.append(ev["text"])
-        elif ev["type"] == "model":
+        if ev["type"] == "model":
             model_name = ev["name"]
         elif ev["type"] == "llm_done":
+            raw = ev["raw"]
             stats = ev["stats"]
         if job is not None:
             job.emit(ev)
-
-    raw = "".join(full)
-    reasoning = "".join(thinking_pieces)
-
-    # Inject reasoning_content into the JSON's `thinking` field when the
-    # provider emitted CoT as a separate stream (Grok / o-series pattern)
-    # and the output JSON didn't already contain one.
-    if reasoning and raw.strip().startswith("{"):
-        try:
-            parsed = json.loads(raw)
-            if not parsed.get("thinking"):
-                merged = {"thinking": reasoning, **parsed}
-                raw = json.dumps(merged, ensure_ascii=False, indent=2)
-                log.info("[%s] injected reasoning_content into JSON 'thinking' field", kind)
-        except json.JSONDecodeError:
-            pass
 
     return {"raw": raw, "stats": stats, "modelName": model_name}
 
