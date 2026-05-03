@@ -148,14 +148,21 @@ def get_base_url() -> str:
 async def ensure_loaded(settings: dict) -> bool:
     """Start llama-server using `settings` (modelPath/port/gpuLayers/contextSize)
     if it's not already running. Returns True if a load was performed, False if
-    already running. Raises RuntimeError if the preset has no modelPath, or
-    propagates HTTPException from get_exe() / start_server errors."""
+    already running or if using a cloud provider. Raises RuntimeError if the
+    preset has no modelPath and is set to llama-server."""
+    # 1. If using a cloud provider, we don't need to ensure anything is loaded locally
+    if settings.get("provider", "llama-server") != "llama-server":
+        return False
+
+    # 2. If llama-server is already running, we're good
     if is_running():
         return False
+
+    # 3. Otherwise, try to auto-load
     model_path = settings.get("modelPath")
     if not model_path:
         raise RuntimeError(
-            "No model is loaded and the preset has no modelPath. Set one in Settings."
+            "No local model is loaded and the preset has no modelPath. Set one in Settings or switch to a cloud provider."
         )
     from app.routers.llm_management import get_exe
     exe = get_exe()
