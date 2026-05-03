@@ -1,6 +1,9 @@
 """Entry point for the PenDrift Python backend."""
 import os
 import copy
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import uvicorn
 from uvicorn.config import LOGGING_CONFIG
