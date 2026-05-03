@@ -54,16 +54,39 @@ def get_prompt(kind: str, provider_name: str = "llama-server") -> str | None:
     """Return the default system prompt for the given provider and task kind.
     Falls back to 'default' provider folder if not found in specific provider."""
     _load()
-    
+
     # 1. Try specific provider
     if provider_name in _cache and kind in _cache[provider_name]:
         return _cache[provider_name][kind]
-    
+
     # 2. Try 'default' folder
     if "default" in _cache and kind in _cache["default"]:
         return _cache["default"][kind]
-        
+
     return None
+
+
+def list_prompts() -> list[dict]:
+    """Return the union of all prompt kinds across providers, in the
+    `[{name, length, preview}]` shape the Settings UI expects. Each entry
+    surfaces the llama-server (or default-folder) version of that kind —
+    enough for the UI to show "this prompt exists, here's its preview"."""
+    _load()
+    seen: dict[str, str] = {}
+    # Iterate provider buckets in priority order (llama-server first since
+    # it's the canonical reference) and accumulate kinds we haven't seen.
+    priority = ["llama-server", "default"]
+    for provider_name in priority + sorted(p for p in _cache if p not in priority):
+        for kind, body in _cache.get(provider_name, {}).items():
+            seen.setdefault(kind, body)
+    return [
+        {
+            "name": kind,
+            "length": len(body),
+            "preview": body[:200].replace("\n", " ").strip(),
+        }
+        for kind, body in sorted(seen.items())
+    ]
 
 
 def _override_key(name: str) -> str:

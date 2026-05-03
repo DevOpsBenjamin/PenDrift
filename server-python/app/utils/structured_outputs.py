@@ -228,7 +228,7 @@ var-pair  ::= string ":" string
                 "systemPromptAdditions": { "type": "string" }
             },
             "required": [
-                "thinking", "name", "description", "variables", "characters", 
+                "thinking", "name", "description", "variables", "characters",
                 "scenario", "milestones", "maskedIntents", "systemPromptAdditions"
             ],
             "additionalProperties": False,
@@ -236,3 +236,17 @@ var-pair  ::= string ":" string
         }
     }
 }
+
+
+# Alias kinds that share an existing structured output. Lets callers pass
+# the kind that matches their flow (e.g., "enrich") and still get the right
+# grammar / schema injected by the provider.
+_ALIASES = {
+    "chub-import": "template",
+    "enrich": "template",
+    "rerun": "template",
+    "narrative-stream": "narrative",
+    "query-stream": "query",
+}
+for alias, target in _ALIASES.items():
+    STRUCTURED_OUTPUTS[alias] = STRUCTURED_OUTPUTS[target]

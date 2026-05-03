@@ -202,18 +202,24 @@ def _dump_response(call: LlmCall, raw: str) -> str | None:
 
 def set_request(call: LlmCall, body: dict) -> None:
     """Persist the request body (messages, samplers, grammar, etc) sent to
-    llama-server, for inspection from the Activity view."""
+    llama-server, for inspection from the Activity view.
+
+    Pre-computes the filename synchronously so callers that log the path
+    immediately (before the executor finishes writing) get a real name
+    instead of None. The actual file write is offloaded to a thread."""
+    started = call.started_at or time.time()
+    ts = datetime.fromtimestamp(started).strftime("%Y%m%d-%H%M%S")
+    filename = f"{ts}-{call.kind}-{call.id[:8]}.json"
+    call.request_file = filename
+
     def _do_save():
         try:
             _REQUEST_DIR.mkdir(parents=True, exist_ok=True)
-            ts = datetime.fromtimestamp(call.started_at).strftime("%Y%m%d-%H%M%S")
-            filename = f"{ts}-{call.kind}-{call.id[:8]}.json"
             path = _REQUEST_DIR / filename
             path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
-            call.request_file = filename
         except OSError as e:
             log.warning("Failed to dump LLM request for call %s: %s", call.id, e)
-    
+
     asyncio.get_event_loop().run_in_executor(None, _do_save)
 
 

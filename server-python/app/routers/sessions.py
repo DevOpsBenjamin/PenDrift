@@ -62,10 +62,13 @@ async def create_session(body: dict):
     db = await get_db()
 
     from app.routers.presets import find_default_preset_id
+    preset_id = body.get("settingsPresetId")
+    eff_id = preset_id if (preset_id and preset_id != "default") else find_default_preset_id()
+
     await db.execute(
         "INSERT INTO sessions (id, title, template_id, template_version, settings_preset_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
         (session_id, body.get("title") or template.get("name", "Untitled"), template_id,
-         snapshot_version, body.get("settingsPresetId") or find_default_preset_id(), now, now),
+         snapshot_version, eff_id, now, now),
     )
 
     await db.execute(
