@@ -370,7 +370,8 @@ async def rerun_template_analysis(template_id: str, body: dict):
     on disk and shows up in History)."""
     from app.routers.presets import find_default_preset_id
     source_filename = body.get("sourceFilename")
-    preset_id = body.get("settingsPresetId") or find_default_preset_id()
+    preset_arg = body.get("settingsPresetId")
+    preset_id = preset_arg if (preset_arg and preset_arg != "default") else find_default_preset_id()
     if not source_filename:
         raise HTTPException(400, "sourceFilename is required")
     from app.services.chub_importer import rerun_with_current
@@ -387,7 +388,8 @@ async def enrich_template(template_id: str, body: dict):
     universe). SSE response, same shape as rerun."""
     from app.routers.presets import find_default_preset_id
     source_filename = body.get("sourceFilename")
-    preset_id = body.get("settingsPresetId") or find_default_preset_id()
+    preset_arg = body.get("settingsPresetId")
+    preset_id = preset_arg if (preset_arg and preset_arg != "default") else find_default_preset_id()
     if not source_filename:
         raise HTTPException(400, "sourceFilename is required")
     from app.services.chub_importer import enrich_with_new_card
