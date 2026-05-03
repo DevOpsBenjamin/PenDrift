@@ -42,6 +42,8 @@ class LlmCall:
     duration_ms: int | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # xAI-only: cost of the request in ticks (10B ticks = $1). Null for other providers.
+    cost_in_usd_ticks: int | None = None
     # Live-updated during SSE streaming:
     first_token_ms: int | None = None   # ms from running_at to first token
     tokens_per_sec: float | None = None
@@ -168,6 +170,7 @@ def mark_done(
     if stats:
         call.prompt_tokens = stats.get("promptTokens")
         call.completion_tokens = stats.get("completionTokens")
+        call.cost_in_usd_ticks = stats.get("costInUsdTicks")
     call.model = model
     if error is not None:
         call.status = "error"

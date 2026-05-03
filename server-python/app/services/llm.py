@@ -36,7 +36,7 @@ import logging
 import time
 from typing import Any, AsyncIterator
 
-from app.services import llm_activity, llm_process
+from app.services import llm_activity, llm_process, xai_budget
 from app.services.providers import get_provider
 
 log = logging.getLogger("pendrift.llm")
@@ -63,6 +63,8 @@ def _extract_usage(usage: dict, duration_ms: int) -> dict:
         "promptTokens": usage.get("prompt_tokens"),
         "completionTokens": usage.get("completion_tokens"),
         "totalTokens": usage.get("total_tokens"),
+        # xAI-only: per-request cost in ticks (10B ticks = $1). None for other providers.
+        "costInUsdTicks": usage.get("cost_in_usd_ticks"),
     }
 
 
@@ -218,6 +220,8 @@ async def run_llm_stream(
             log.info("[%s] injected reasoning_content into JSON 'thinking' field", kind)
         stats = _extract_usage(usage, duration_ms)
         llm_activity.mark_done(call, stats=stats, model=model_name, raw_response=raw)
+        if provider_name == "xai":
+            xai_budget.apply_local_cost(stats.get("costInUsdTicks"))
         yield {"type": "llm_done", "stats": stats, "modelName": model_name, "raw": raw}
     except asyncio.CancelledError:
         partial, _ = _merge_reasoning_into_json("".join(full), "".join(thinking_pieces))

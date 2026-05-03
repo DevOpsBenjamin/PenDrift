@@ -29,6 +29,7 @@ async def llm_status():
 @router.get("/providers/status")
 async def provider_status():
     xai_key = os.environ.get("XAI_API_KEY", "")
+    xai_mgmt_key = os.environ.get("XAI_MANAGEMENT_KEY", "")
     openai_key = os.environ.get("OPENAI_API_KEY", "")
 
     def is_configured(k: str) -> bool:
@@ -36,6 +37,7 @@ async def provider_status():
 
     return {
         "xai": is_configured(xai_key),
+        "xaiManagement": is_configured(xai_mgmt_key),
         "openai": is_configured(openai_key),
         "llama-server": True,
     }

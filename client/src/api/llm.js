@@ -40,3 +40,6 @@ export const getRequestDump = (filename) =>
 
 export const cancelCall = (id) =>
   api.post(`llm/cancel/${encodeURIComponent(id)}`).json();
+
+export const getXaiBudget = () => api.get('xai/budget').json();
+export const refreshXaiBudget = () => api.post('xai/budget/refresh').json();

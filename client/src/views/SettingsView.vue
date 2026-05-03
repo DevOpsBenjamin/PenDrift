@@ -248,6 +248,16 @@
              </div>
           </div>
           <p class="text-xs text-text-muted">API Keys are securely read from the backend <code>.env</code> file. No keys are saved in this preset.</p>
+          <div v-if="editing.provider === 'xai'" class="flex items-center gap-2 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full" :class="providerStatus.xaiManagement ? 'bg-green-400' : 'bg-text-muted/40'"></span>
+            <span class="text-text-muted">
+              Management Key:
+              <span :class="providerStatus.xaiManagement ? 'text-text-secondary' : 'text-text-muted'">
+                {{ providerStatus.xaiManagement ? 'configured' : 'not configured' }}
+              </span>
+              — optional, enables the budget widget. Set <code>XAI_MANAGEMENT_KEY</code> in <code>.env</code>.
+            </span>
+          </div>
         </template>
 
         <!-- Samplers -->
@@ -465,7 +475,7 @@ const llmVersionInfo = ref({ installed: null, latest: null, updateAvailable: fal
 const llmVariant = ref('cuda13');
 const llmDownloading = ref(false);
 
-const providerStatus = ref({ "llama-server": true, "xai": false, "openai": false });
+const providerStatus = ref({ "llama-server": true, "xai": false, "xaiManagement": false, "openai": false });
 
 const isActivePreset = computed(() =>
   llmStatus.value.running

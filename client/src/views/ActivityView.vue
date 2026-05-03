@@ -103,6 +103,7 @@
               <th class="px-3 py-2 text-right font-medium">Prompt</th>
               <th class="px-3 py-2 text-right font-medium">Gen</th>
               <th class="px-3 py-2 text-right font-medium">Tok/s</th>
+              <th class="px-3 py-2 text-right font-medium">Cost</th>
               <th class="px-3 py-2 text-left font-medium">Model</th>
               <th class="px-3 py-2 text-left font-medium">Inspect</th>
             </tr>
@@ -124,6 +125,11 @@
               <td class="px-3 py-2 text-right text-xs text-text-muted tabular-nums">{{ call.prompt_tokens ?? '—' }}</td>
               <td class="px-3 py-2 text-right text-xs text-text-muted tabular-nums">{{ call.completion_tokens ?? '—' }}</td>
               <td class="px-3 py-2 text-right text-xs text-text-muted tabular-nums">{{ histToksPerSec(call) }}</td>
+              <td class="px-3 py-2 text-right text-xs tabular-nums"
+                :class="call.cost_in_usd_ticks ? 'text-text-secondary' : 'text-text-muted'"
+                :title="call.cost_in_usd_ticks ? `${call.cost_in_usd_ticks.toLocaleString()} ticks` : ''">
+                {{ formatCost(call.cost_in_usd_ticks) }}
+              </td>
               <td class="px-3 py-2 text-xs text-text-muted font-mono truncate max-w-[160px]" :title="call.model">{{ shortModel(call.model) }}</td>
               <td class="px-3 py-2 text-xs">
                 <div class="flex gap-2">
@@ -323,5 +329,10 @@ function histToksPerSec(call) {
 function shortModel(name) {
   if (!name) return '—';
   return name.split(/[\\/]/).pop();
+}
+
+function formatCost(ticks) {
+  if (ticks == null) return '—';
+  return '$' + (ticks / 10_000_000_000).toFixed(4);
 }
 </script>
