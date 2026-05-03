@@ -52,6 +52,12 @@ class Job:
     started_at: float | None = None
     finished_at: float | None = None
 
+    # Live token-rate stats, updated by emit() as deltas come in. Surfaced in
+    # to_dict() so the cross-job state stream can show them in the toast bar
+    # without needing a separate per-job SSE.
+    tokens: int = 0
+    first_token_at: float | None = None
+
     # Replay buffer of every event emitted so far. Used so a late subscriber
     # can catch up before going live.
     events: list[dict] = field(default_factory=list)
@@ -61,13 +67,32 @@ class Job:
     # Underlying asyncio task running the runner coroutine. Held so cancel()
     # can target it. None until the job actually starts running.
     task: asyncio.Task | None = None
+    # Throttle for token-driven cross-job snapshot pushes (per-job to avoid
+    # one fast job starving slow ones).
+    _last_progress_broadcast: float = 0.0
 
     # ── Event API used by the runner ─────────────────────
     def emit(self, event: dict) -> None:
-        """Append an event to the buffer and broadcast to live subscribers."""
+        """Append an event to the buffer, broadcast to live per-job
+        subscribers, and update aggregate stats so the cross-job state
+        stream can show live progress without a separate per-job SSE."""
         self.events.append(event)
         for q in self._subscribers:
             q.put_nowait(event)
+
+        # Aggregate live progress into the Job itself.
+        et = event.get("type")
+        if et == "first_token":
+            self.first_token_at = time.time()
+        elif et == "delta":
+            self.tokens += 1
+            # Throttle the cross-job state push so a fast model (200 tok/s)
+            # doesn't generate 200 broadcasts/s. ~3 Hz is plenty for a
+            # human-readable rate counter.
+            now = time.monotonic()
+            if now - self._last_progress_broadcast >= 0.33:
+                self._last_progress_broadcast = now
+                _broadcast_state()
 
     def set_result(self, result: Any) -> None:
         """Stash a final payload (e.g. the imported template, the saved chunk)
@@ -98,6 +123,12 @@ class Job:
 
     # ── Serialization for /api/jobs ──────────────────────
     def to_dict(self) -> dict:
+        # Compute live tokens/sec from the moment the model started producing.
+        rate = None
+        if self.first_token_at and self.tokens > 0:
+            elapsed = time.time() - self.first_token_at
+            if elapsed > 0.1:
+                rate = self.tokens / elapsed
         return {
             "id": self.id,
             "kind": self.kind,
@@ -109,6 +140,8 @@ class Job:
             "startedAt": self.started_at,
             "finishedAt": self.finished_at,
             "queuePosition": _queue_position_of(self) if self.status == "queued" else None,
+            "tokens": self.tokens if self.tokens else None,
+            "tokensPerSec": round(rate, 1) if rate is not None else None,
         }
 
 

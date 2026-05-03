@@ -65,45 +65,18 @@ export const attachTemplateSource = (id, card) =>
 export const deleteTemplateSource = (id, filename) =>
   api.delete(`presets/templates/${encodeURIComponent(id)}/sources/${encodeURIComponent(filename)}`).json();
 
-async function _streamLlmOp(path, sourceFilename, settingsPresetId, onProgress) {
-  // SSE-based long-running op. Returns a Promise that resolves with the
-  // `done` event payload, rejects on `error`. Heartbeat events are passed to
-  // onProgress so the UI can show elapsed time.
-  const resp = await fetch(`/api/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sourceFilename, settingsPresetId }),
-  });
-  if (!resp.ok) {
-    let msg = `${resp.status} ${resp.statusText}`;
-    try { const err = await resp.json(); msg = err.detail || msg; } catch { /* ignore */ }
-    throw new Error(msg);
-  }
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) throw new Error('Stream ended without a done event');
-    buffer += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      for (const line of frame.split('\n')) {
-        if (!line.startsWith('data: ')) continue;
-        let ev;
-        try { ev = JSON.parse(line.slice(6)); } catch { continue; }
-        if (ev.type === 'done') return ev;
-        if (ev.type === 'error') throw new Error(ev.message);
-        onProgress?.(ev);
-      }
-    }
-  }
-}
+/**
+ * Kick off a rerun or enrich. Returns immediately with `{jobId, kind, templateId}`.
+ * The actual work runs as a background job — the JobsToastBar reflects its
+ * progress via /api/jobs/stream, and the caller watches the jobs store for the
+ * matching jobId to know when to refresh the template.
+ */
+export const rerunTemplateAnalysis = (id, sourceFilename, settingsPresetId = 'default') =>
+  api.post(`presets/templates/${encodeURIComponent(id)}/rerun`, {
+    json: { sourceFilename, settingsPresetId },
+  }).json();
 
-export const rerunTemplateAnalysis = (id, sourceFilename, settingsPresetId = 'default', onProgress) =>
-  _streamLlmOp(`presets/templates/${encodeURIComponent(id)}/rerun`, sourceFilename, settingsPresetId, onProgress);
-
-export const enrichTemplate = (id, sourceFilename, settingsPresetId = 'default', onProgress) =>
-  _streamLlmOp(`presets/templates/${encodeURIComponent(id)}/enrich`, sourceFilename, settingsPresetId, onProgress);
+export const enrichTemplate = (id, sourceFilename, settingsPresetId = 'default') =>
+  api.post(`presets/templates/${encodeURIComponent(id)}/enrich`, {
+    json: { sourceFilename, settingsPresetId },
+  }).json();

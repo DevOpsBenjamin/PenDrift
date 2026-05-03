@@ -315,27 +315,24 @@ async def _template_op_runner(
     })
 
 
-async def _stream_llm_op(template_id: str, source_filename: str, preset_id: str,
-                         action: str, llm_fn):
-    """SSE generator for rerun + enrich. Creates a job and relays its event
-    stream so the existing client SSE contract (open / model_loading /
-    started / done / error events) keeps working — and so the same op also
-    shows up in /api/jobs and the Activity view."""
-    yield ": stream open\n\n"
-
+def _create_template_op_job(
+    template_id: str, source_filename: str, preset_id: str,
+    action: str, llm_fn,
+) -> dict:
+    """Validate inputs, create the job, return `{jobId}` immediately.
+    Caller (rerun/enrich endpoint) returns this as plain JSON — no SSE.
+    The toast bar's existing /api/jobs/stream picks up the new job and
+    shows progress; the modal that triggered the action just closes."""
     card = template_store.load_source(template_id, source_filename)
     if card is None:
-        yield _sse({"type": "error", "message": f"Source '{source_filename}' not found"})
-        return
+        raise HTTPException(404, f"Source '{source_filename}' not found")
     current = template_store.load_current(template_id)
     if current is None:
-        yield _sse({"type": "error", "message": "Template not found"})
-        return
+        raise HTTPException(404, "Template not found")
     try:
         settings = _load_settings(preset_id)
     except (json.JSONDecodeError, OSError) as e:
-        yield _sse({"type": "error", "message": f"Could not load preset '{preset_id}': {e}"})
-        return
+        raise HTTPException(500, f"Could not load preset '{preset_id}': {e}")
 
     label = f"{action.capitalize()} · {template_id}"
     job = job_manager.create_job(
@@ -345,29 +342,15 @@ async def _stream_llm_op(template_id: str, source_filename: str, preset_id: str,
             j, template_id, source_filename, action, llm_fn, card, current, settings
         ),
     )
-
-    queue = job.subscribe()
-    while True:
-        try:
-            ev = await queue.get()
-        except asyncio.CancelledError:
-            log.info("SSE %s for %s: client disconnected, job continues", action, template_id)
-            raise
-        if ev is None:
-            # Job finalized. If it failed and never emitted an error event,
-            # surface the stored error so the client doesn't hang on `done`.
-            if job.status == "error" and not any(e.get("type") == "error" for e in job.events):
-                yield _sse({"type": "error", "message": f"LLM {action} failed: {job.error}"})
-            return
-        yield _sse(ev)
+    return {"jobId": job.id, "kind": action, "templateId": template_id}
 
 
 @router.post("/{template_id}/rerun")
 async def rerun_template_analysis(template_id: str, body: dict):
     """Re-analyze the same source against the current template (audit/correct/fill).
-    SSE response — emits processing heartbeats then a `done` event when the new
-    version is saved. Survives client disconnect (the new version still lands
-    on disk and shows up in History)."""
+    Returns {jobId} immediately — the actual work runs as a background job
+    visible in /api/jobs and the toast bar. Survives client disconnect
+    (the new version lands on disk regardless)."""
     from app.routers.presets import find_default_preset_id
     source_filename = body.get("sourceFilename")
     preset_arg = body.get("settingsPresetId")
@@ -375,17 +358,15 @@ async def rerun_template_analysis(template_id: str, body: dict):
     if not source_filename:
         raise HTTPException(400, "sourceFilename is required")
     from app.services.chub_importer import rerun_with_current
-    return StreamingResponse(
-        _stream_llm_op(template_id, source_filename, preset_id, "rerun", rerun_with_current),
-        media_type="text/event-stream",
-        headers=_SSE_HEADERS,
+    return _create_template_op_job(
+        template_id, source_filename, preset_id, "rerun", rerun_with_current,
     )
 
 
 @router.post("/{template_id}/enrich")
 async def enrich_template(template_id: str, body: dict):
     """Merge a NEW card into the current template (different character, same
-    universe). SSE response, same shape as rerun."""
+    universe). Returns {jobId} immediately, same as /rerun."""
     from app.routers.presets import find_default_preset_id
     source_filename = body.get("sourceFilename")
     preset_arg = body.get("settingsPresetId")
@@ -393,8 +374,6 @@ async def enrich_template(template_id: str, body: dict):
     if not source_filename:
         raise HTTPException(400, "sourceFilename is required")
     from app.services.chub_importer import enrich_with_new_card
-    return StreamingResponse(
-        _stream_llm_op(template_id, source_filename, preset_id, "enrich", enrich_with_new_card),
-        media_type="text/event-stream",
-        headers=_SSE_HEADERS,
+    return _create_template_op_job(
+        template_id, source_filename, preset_id, "enrich", enrich_with_new_card,
     )

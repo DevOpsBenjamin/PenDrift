@@ -9,7 +9,6 @@
       class="pointer-events-auto bg-bg-surface border border-border-subtle rounded-xl shadow-lg overflow-hidden"
     >
       <div class="px-4 py-3 flex items-start gap-3">
-        <!-- Status icon -->
         <div class="shrink-0 mt-0.5">
           <svg v-if="job.status === 'running'" class="w-4 h-4 text-accent animate-spin" fill="none" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.3" stroke-width="3" />
@@ -29,8 +28,11 @@
             <span v-if="job.status === 'queued'" class="text-xs text-text-muted">
               queued{{ job.queuePosition > 0 ? ` · ${job.queuePosition} ahead` : '' }}
             </span>
-            <span v-else-if="liveStatsByJob[job.id]" class="text-xs text-text-muted tabular-nums">
-              {{ liveStatsByJob[job.id].tokens }} tok · {{ liveStatsByJob[job.id].rate.toFixed(1) }}/s
+            <span v-else-if="job.status === 'running' && job.tokens" class="text-xs text-text-muted tabular-nums">
+              {{ job.tokens }} tok{{ job.tokensPerSec != null ? ` · ${job.tokensPerSec.toFixed(1)}/s` : '' }}
+            </span>
+            <span v-else-if="job.status === 'running'" class="text-xs text-text-muted">
+              running…
             </span>
           </div>
           <div class="text-sm text-text-primary truncate" :title="job.label">
@@ -49,15 +51,23 @@
 </template>
 
 <script setup>
-import { computed, watch, onUnmounted, reactive } from 'vue';
+// Live token rate / tok-per-sec used to live in this component, fed by a
+// per-job EventSource subscription. That ate one HTTP/1.1 connection slot
+// per running job — combined with the global /api/jobs/stream and the
+// per-page resource fetches, the browser's 6-conn/origin limit kicked in
+// and made the UI feel frozen during long LLM calls.
+//
+// Now: this toast bar consumes only the cross-job state stream
+// (JobsStore → /api/jobs/stream). It shows kind + label + status + queue
+// position. For live token rate, click into the Activity view — it polls
+// /api/llm/activity which has the per-call detail.
+import { computed } from 'vue';
 import { useJobsStore } from '../../stores/jobs.js';
-import * as jobsApi from '../../api/jobs.js';
 
 const store = useJobsStore();
 
 // Narrative + regenerate already have a dedicated streaming UI in SessionView,
-// so they don't need a duplicate toast. Everything else is "background work" —
-// toast it.
+// so they don't need a duplicate toast. Everything else is "background work".
 const HIDDEN_KINDS = new Set(['narrative', 'regenerate']);
 
 const visibleJobs = computed(() =>
@@ -72,6 +82,7 @@ const KIND_LABELS = {
   'consolidate': 'Consolidate',
   'title': 'Title',
   'finalize-chapter': 'Finalize',
+  'query': 'Ask',
 };
 function kindLabel(kind) {
   return KIND_LABELS[kind] || kind;
@@ -85,64 +96,9 @@ const KIND_BADGE = {
   'consolidate': 'bg-purple-500/15 text-purple-300',
   'title': 'bg-emerald-500/15 text-emerald-300',
   'finalize-chapter': 'bg-emerald-500/15 text-emerald-300',
+  'query': 'bg-blue-500/15 text-blue-300',
 };
 function kindBadgeClass(kind) {
   return KIND_BADGE[kind] || 'bg-bg-secondary text-text-secondary';
 }
-
-// Per-running-job live token stats. We attach an EventSource to each running
-// job to get token deltas, count them, and show tokens/sec. The job's own
-// SSE closes when the job terminates.
-const liveStatsByJob = reactive({});
-const sources = new Map();
-
-function attachLive(job) {
-  if (sources.has(job.id)) return;
-  const startTs = performance.now();
-  let firstTokenTs = null;
-  let tokens = 0;
-  liveStatsByJob[job.id] = { tokens: 0, rate: 0 };
-
-  const es = jobsApi.subscribeToJob(job.id, (ev) => {
-    if (ev.type === 'first_token') {
-      firstTokenTs = performance.now();
-    } else if (ev.type === 'delta') {
-      tokens++;
-      const elapsed = (firstTokenTs ? performance.now() - firstTokenTs : performance.now() - startTs) / 1000;
-      const rate = elapsed > 0.1 ? tokens / elapsed : 0;
-      liveStatsByJob[job.id] = { tokens, rate };
-    }
-  }, () => {
-    sources.delete(job.id);
-  });
-  sources.set(job.id, es);
-}
-
-function detachLive(jobId) {
-  const es = sources.get(jobId);
-  if (es) {
-    es.close();
-    sources.delete(jobId);
-  }
-  delete liveStatsByJob[jobId];
-}
-
-watch(visibleJobs, (jobs) => {
-  const seen = new Set(jobs.map(j => j.id));
-  // Attach for jobs that just transitioned to running.
-  for (const job of jobs) {
-    if (job.status === 'running' && !sources.has(job.id)) {
-      attachLive(job);
-    }
-  }
-  // Detach for jobs that left the visible list.
-  for (const id of [...sources.keys()]) {
-    if (!seen.has(id)) detachLive(id);
-  }
-}, { immediate: true });
-
-onUnmounted(() => {
-  for (const es of sources.values()) es.close();
-  sources.clear();
-});
 </script>

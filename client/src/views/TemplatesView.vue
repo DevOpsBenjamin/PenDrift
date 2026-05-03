@@ -511,14 +511,12 @@ const rerunning = ref(false);
 const rerunSource = ref(null);
 const enriching = ref(false);
 const enrichSource = ref(null);
-const llmProgress = ref(null);  // {phase: 'model_loading'|'processing', elapsed?: number}
 const llmBusy = computed(() => rerunning.value || enriching.value);
 
+// Live progress (model load / token rate / elapsed) lives in the JobsToastBar
+// which subscribes to /api/jobs/stream globally. The button label here just
+// shows "Rerun…" / "Enrich…" until the matching job in the store completes.
 function llmStatusLabel(verb) {
-  const p = llmProgress.value;
-  if (!p) return `${verb}…`;
-  if (p.phase === 'model_loading') return 'Loading model…';
-  if (p.phase === 'processing') return `${verb}… ${p.elapsed ?? 0}s`;
   return `${verb}…`;
 }
 
@@ -591,34 +589,65 @@ async function deleteSource(filename) {
   }
 }
 
+// jobId → {busyRef, sourceRef, label, templateId} so the global watch on
+// jobs.jobs (already wired further down for chub-import) can also clear our
+// local "busy" state and refresh the editor when a rerun/enrich finishes.
+const pendingTemplateOpJobs = ref({});
+
 async function _runLlmOnSource(apiCall, filename, busyRef, sourceRef, label) {
   if (!editing.value || llmBusy.value) return;
   busyRef.value = true;
   sourceRef.value = filename;
-  llmProgress.value = { phase: 'starting' };
   try {
     const presetId = store.defaultPresetId();
-    const onProgress = (ev) => {
-      if (ev.type === 'model_loading') llmProgress.value = { phase: 'model_loading' };
-      else if (ev.type === 'model_loaded') llmProgress.value = { phase: 'starting' };
-      else if (ev.type === 'started') llmProgress.value = { phase: 'processing', elapsed: 0 };
-      else if (ev.type === 'processing') llmProgress.value = { phase: 'processing', elapsed: ev.elapsed };
-    };
-    const res = await apiCall(editing.value.id, filename, presetId, onProgress);
-    if (res?.template) {
-      editing.value = ensureFields(JSON.parse(JSON.stringify(res.template)));
-      editingPristine.value = JSON.stringify(editing.value);
-      historyEntries.value = await templatesApi.listTemplateVersions(editing.value.id);
-      await store.fetchTemplates();
+    const res = await apiCall(editing.value.id, filename, presetId);
+    if (res?.jobId) {
+      pendingTemplateOpJobs.value[res.jobId] = {
+        busyRef, sourceRef, label, templateId: editing.value.id,
+      };
+    } else {
+      throw new Error('Backend did not return a jobId');
     }
   } catch (err) {
     window.alert(`${label} failed: ` + (err.message || err));
-  } finally {
     busyRef.value = false;
     sourceRef.value = null;
-    llmProgress.value = null;
   }
 }
+
+watch(() => jobs.jobs, async (current) => {
+  for (const jobId of Object.keys(pendingTemplateOpJobs.value)) {
+    const j = current.find(x => x.id === jobId);
+    if (!j) continue;
+    if (j.status !== 'done' && j.status !== 'cancelled' && j.status !== 'error') continue;
+
+    const ctx = pendingTemplateOpJobs.value[jobId];
+    delete pendingTemplateOpJobs.value[jobId];
+    if (ctx) {
+      ctx.busyRef.value = false;
+      ctx.sourceRef.value = null;
+    }
+
+    if (j.status === 'error') {
+      window.alert(`${ctx?.label || 'Template op'} failed: ${j.error || 'unknown'}`);
+      continue;
+    }
+    if (j.status !== 'done') continue;
+
+    // Refresh the editor with the new version, but only if the user is still
+    // looking at this template. App.vue handles the sidebar refresh globally.
+    if (editing.value && ctx && editing.value.id === ctx.templateId) {
+      try {
+        const tpl = await templatesApi.getTemplate(ctx.templateId);
+        if (tpl) {
+          editing.value = ensureFields(JSON.parse(JSON.stringify(tpl)));
+          editingPristine.value = JSON.stringify(editing.value);
+          historyEntries.value = await templatesApi.listTemplateVersions(ctx.templateId);
+        }
+      } catch { /* sidebar refresh still happens via App.vue */ }
+    }
+  }
+}, { deep: true });
 
 const runRerun = (filename) =>
   _runLlmOnSource(templatesApi.rerunTemplateAnalysis, filename, rerunning, rerunSource, 'Rerun');
