@@ -1,45 +1,52 @@
-"""LLM inference client — provider-agnostic façade.
+"""LLM inference façade — runner + provider façade.
 
-The shared core is `sse_completion()`: an async generator that yields
-normalized events (`delta`, `model`, `usage`, `first_token`) from the
-configured LLM provider. Each provider (currently llama-server, with an
-OpenAI-compatible stub in place for future) implements the underlying HTTP
-+ SSE handling — this file just delegates and adds the buffered-completion
-convenience wrapper.
+Three layers, top-down:
 
-Higher-level wrappers in this file:
+1. **`run_llm_stream(messages, *, settings, kind, ...)`** — high-level event
+   stream with all the boilerplate factored out. Handles provider
+   selection, llama-server auto-start (local only), llm_activity
+   register/mark_done, the global serialisation lock, SSE event
+   consumption, and cancel/error mark-down. Yields `started`, then the
+   raw `sse_completion` events (`delta`, `model`, `usage`, `first_token`),
+   then `llm_done` with stats + raw text. Use this for streaming flows
+   (narrative, query) that need live events.
 
-  - `generate_completion()` — buffers all deltas and returns the assembled
-    response (used by callers that don't need live UI streaming and aren't
-    routed through job_manager). Most modern code passes `job=...` directly
-    to the higher-level service (chub_importer, title_generator, etc.) so
-    LLM events stream into the job — this stays as the simple fallback.
-  - `services/llm_stream.py::stream_*` — parse the deltas character-by-character
-    through a structured-output parser to emit semantic events for the UI.
+2. **`run_llm_buffered(messages, *, settings, kind, job=None, ...)`** —
+   convenience wrapper that consumes `run_llm_stream` into a single
+   buffered result. Optional `job` parameter forwards every event so the
+   toast bar / Activity view see live progress. Returns
+   `{"raw": str, "stats": dict, "modelName": str}`. Used by every flow
+   that only needs the final text (chub-import, meta, title, consolidate).
 
-All callers serialise through `_get_lock()`, so only one inference runs at
-a time. (`services/job_manager.py` enforces the same ordering at the
-job-manager level — both layers must agree, but the lock here is what
-physically stops two HTTP requests from racing into a single-slot backend
-like llama-server.)
+3. **`sse_completion(body, ...)`** — the lowest-level primitive. Pure
+   provider façade: yields raw events from whichever provider is
+   configured (llama-server, openai-compat, xai, ...). No lock, no
+   activity, no model-load. Reserved for callers that need fine-grained
+   control. Most code should use the runners above.
+
+Provider selection lives in `services/providers/`. The runners read
+`settings.provider` (default `"llama-server"`) + `settings.providerConfig`
+to instantiate the right backend.
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import time
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-from app.services import llm_activity
+from app.services import llm_activity, llm_process
 from app.services.providers import get_provider
 
 log = logging.getLogger("pendrift.llm")
 
-# Provider Selection
-# Provider is now dynamically selected based on the preset settings.
 
-# ── Serialization queue ─────────────────────────────────
-# Only one LLM call hits llama-server at a time. Lazy-init so module import
-# works without a running event loop.
+# ── Serialisation ────────────────────────────────────────
+# asyncio.Lock is NOT reentrant. The runners below own it; callers must
+# NOT take it themselves on top of a runner call. (`services/job_manager.py`
+# enforces an outer job-level queue too — both layers nest cleanly because
+# job_manager hands off to the runner once and never re-acquires.)
 _queue: asyncio.Lock | None = None
 
 
@@ -50,20 +57,22 @@ def _get_lock() -> asyncio.Lock:
     return _queue
 
 
-# ── Body builder ────────────────────────────────────────
+# ── Body builder ─────────────────────────────────────────
 def _build_body(messages: list[dict], **kwargs) -> dict:
-    """Build the request body, including only set sampling params + grammar."""
+    """Build an OpenAI-compatible chat completion body. Includes only the
+    sampling params that were explicitly set (None → field omitted)."""
     body: dict = {"messages": messages}
     for k in ("temperature", "max_tokens", "top_p", "top_k", "min_p",
               "repeat_penalty", "presence_penalty", "frequency_penalty", "seed"):
         v = kwargs.get(k)
         if v is not None:
             body[k] = v
+    if kwargs.get("grammar"):
+        body["grammar"] = kwargs["grammar"]
     return body
 
 
-def _extract_usage(data: dict, duration_ms: int) -> dict:
-    usage = data.get("usage", {}) or {}
+def _extract_usage(usage: dict, duration_ms: int) -> dict:
     return {
         "durationMs": duration_ms,
         "promptTokens": usage.get("prompt_tokens"),
@@ -72,7 +81,28 @@ def _extract_usage(data: dict, duration_ms: int) -> dict:
     }
 
 
-# ── Provider-agnostic SSE entry point ────────────────────
+def _provider_from_settings(settings: dict | None) -> tuple[str, dict]:
+    s = settings or {}
+    name = s.get("provider", "llama-server")
+    config = s.get("providerConfig", {}).get(name, {})
+    return name, config
+
+
+async def _ensure_provider_ready(settings: dict | None) -> None:
+    """Auto-start llama-server if the preset targets it and it's not up.
+    No-op for external providers (xai, openai, ...)."""
+    name, _ = _provider_from_settings(settings)
+    if name != "llama-server":
+        return
+    if llm_process.is_running():
+        return
+    try:
+        await llm_process.ensure_loaded(settings or {})
+    except (RuntimeError, TimeoutError) as e:
+        raise RuntimeError(f"Could not start llama-server: {e}") from e
+
+
+# ── Provider-agnostic SSE primitive (low-level) ──────────
 async def sse_completion(
     body: dict,
     *,
@@ -81,69 +111,138 @@ async def sse_completion(
     activity_call=None,
     kind: str = "completion",
 ) -> AsyncIterator[dict]:
-    """Yield normalized events from the configured LLM provider.
+    """Yield raw events from the configured provider. Caller owns lock,
+    activity register, and model-load.
 
-    Event shape (all providers translate their native format into this):
-      {"type": "first_token", "ms": int}
-      {"type": "delta", "text": str}             # only when content non-empty
-      {"type": "model", "name": str}
-      {"type": "usage", "data": dict}
-
-    No terminal "done" event — caller sees StopAsyncIteration. Exceptions
-    propagate (httpx errors, CancelledError, etc.) so the caller decides
-    how to surface them.
-    """
-    kwargs = provider_kwargs or {}
-    provider = get_provider(provider_name, **kwargs)
-    # NOTE: callers (stream_narrative, _llm_template_call, run_meta_analysis,
-    # generate_chapter_title, consolidate, generate_completion) already hold
-    # `_get_lock()` around their entire flow. `asyncio.Lock` is NOT reentrant —
-    # acquiring it here would deadlock the same task on every LLM call.
+    Most callers should use `run_llm_stream` / `run_llm_buffered` instead —
+    those wrap this with all the boilerplate."""
+    provider = get_provider(provider_name, **(provider_kwargs or {}))
     async for event in provider.sse_completion(body, activity_call=activity_call, kind=kind):
         yield event
 
 
-# ── Buffered consumers (no live streaming to UI) ────────
-async def _buffered_completion(
-    body: dict,
-    activity_call,
-    kind: str,
-    provider_name: str,
-    provider_kwargs: dict,
-) -> tuple[dict, int]:
-    """Consume `sse_completion` into a buffered response shaped like the
-    non-streaming OpenAI completion. Returns (assembled, duration_ms)."""
-    content_pieces: list[str] = []
-    thinking_pieces: list[str] = []
+# ── High-level runners ───────────────────────────────────
+async def run_llm_stream(
+    messages: list[dict],
+    *,
+    settings: dict | None = None,
+    kind: str = "completion",
+    session_id: str | None = None,
+    **sampling,
+) -> AsyncIterator[dict]:
+    """End-to-end LLM call as an event stream.
+
+    Yields, in order:
+      - {"type": "started", "callId": str}
+      - all events from `sse_completion` (delta, model, usage, first_token)
+      - {"type": "llm_done", "stats": dict, "modelName": str, "raw": str}
+
+    Raises CancelledError / Exception unchanged after marking the activity
+    call cancelled / errored. Callers can wrap to handle "save partial on
+    cancel" flows.
+    """
+    provider_name, provider_config = _provider_from_settings(settings)
+    await _ensure_provider_ready(settings)
+
+    body = _build_body(messages, **sampling)
+    call = llm_activity.register(kind, session_id)
+    llm_activity.attach_task(call, asyncio.current_task())
+
+    full: list[str] = []
     usage: dict = {}
     model_name = ""
     start = time.monotonic()
 
-    async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_kwargs, activity_call=activity_call, kind=kind):
+    try:
+        async with _get_lock():
+            llm_activity.mark_running(call)
+            yield {"type": "started", "callId": call.id}
+
+            async for ev in sse_completion(
+                body,
+                provider_name=provider_name,
+                provider_kwargs=provider_config,
+                activity_call=call,
+                kind=kind,
+            ):
+                if ev["type"] == "delta":
+                    full.append(ev["text"])
+                elif ev["type"] == "model":
+                    model_name = ev["name"]
+                elif ev["type"] == "usage":
+                    usage = ev["data"]
+                yield ev
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        raw = "".join(full)
+        stats = _extract_usage(usage, duration_ms)
+        llm_activity.mark_done(call, stats=stats, model=model_name, raw_response=raw)
+        yield {"type": "llm_done", "stats": stats, "modelName": model_name, "raw": raw}
+    except asyncio.CancelledError:
+        llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
+        raise
+    except Exception as e:
+        llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
+        raise
+
+
+async def run_llm_buffered(
+    messages: list[dict],
+    *,
+    settings: dict | None = None,
+    kind: str = "completion",
+    session_id: str | None = None,
+    job: Any = None,
+    **sampling,
+) -> dict:
+    """Buffered LLM call: consume `run_llm_stream` into a single result.
+    If `job` is provided, every stream event is forwarded so the toast bar
+    sees live progress (token-by-token).
+
+    Returns: {"raw": str, "stats": dict, "modelName": str}.
+
+    The `raw` string may have its `thinking` field injected from
+    `reasoning_content` if the provider emitted CoT separately and the JSON
+    output didn't already contain one (Grok / OpenAI o-series pattern)."""
+    full: list[str] = []
+    thinking_pieces: list[str] = []
+    stats: dict = {}
+    model_name = ""
+
+    async for ev in run_llm_stream(
+        messages, settings=settings, kind=kind, session_id=session_id, **sampling
+    ):
         if ev["type"] == "delta":
-            content_pieces.append(ev["text"])
+            full.append(ev["text"])
         elif ev["type"] == "thinking_delta":
             thinking_pieces.append(ev["text"])
         elif ev["type"] == "model":
             model_name = ev["name"]
-        elif ev["type"] == "usage":
-            usage = ev["data"]
+        elif ev["type"] == "llm_done":
+            stats = ev["stats"]
+        if job is not None:
+            job.emit(ev)
 
-    duration_ms = int((time.monotonic() - start) * 1000)
-    log.info("[%s] done  content_tokens~=%d  duration=%dms  usage=%s",
-             kind, len(content_pieces), duration_ms, usage or "-")
+    raw = "".join(full)
+    reasoning = "".join(thinking_pieces)
 
-    assembled = {
-        "choices": [{"message": {
-            "content": "".join(content_pieces),
-            "reasoning_content": "".join(thinking_pieces)
-        }}],
-        "model": model_name,
-        "usage": usage,
-    }
-    return assembled, duration_ms
+    # Inject reasoning_content into the JSON's `thinking` field when the
+    # provider emitted CoT as a separate stream (Grok / o-series pattern)
+    # and the output JSON didn't already contain one.
+    if reasoning and raw.strip().startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            if not parsed.get("thinking"):
+                merged = {"thinking": reasoning, **parsed}
+                raw = json.dumps(merged, ensure_ascii=False, indent=2)
+                log.info("[%s] injected reasoning_content into JSON 'thinking' field", kind)
+        except json.JSONDecodeError:
+            pass
+
+    return {"raw": raw, "stats": stats, "modelName": model_name}
 
 
+# ── Backward-compat alias ────────────────────────────────
 async def generate_completion(
     messages: list[dict],
     *,
@@ -156,61 +255,23 @@ async def generate_completion(
     presence_penalty: float | None = None,
     frequency_penalty: float | None = None,
     seed: int | None = None,
+    grammar: str | None = None,
     kind: str = "completion",
     session_id: str | None = None,
     settings: dict | None = None,
 ) -> dict:
-    """Generic structured completion for utility calls (title gen,
-    chub import, meta-analysis, character consolidation).
-
-    Callers `json.loads(result["raw"])` and pick their own fields.
-    Returns: {raw, stats, modelName}.
-    """
-    call = llm_activity.register(kind, session_id)
-    llm_activity.attach_task(call, asyncio.current_task())
-    try:
-        async with _get_lock():
-            llm_activity.mark_running(call)
-            body = _build_body(
-                messages,
-                temperature=temperature, max_tokens=max_tokens,
-                top_p=top_p, top_k=top_k, min_p=min_p,
-                repeat_penalty=repeat_penalty,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty,
-                seed=seed,
-            )
-            provider_name = (settings or {}).get("provider", "llama-server")
-            provider_config = (settings or {}).get("providerConfig", {}).get(provider_name, {})
-            # The outer `async with _get_lock()` above already serialises this
-            # call. Don't re-acquire (asyncio.Lock is non-reentrant — would
-            # deadlock the same task).
-            data, duration_ms = await _buffered_completion(body, call, kind, provider_name, provider_config)
-
-        msg = (data.get("choices") or [{}])[0].get("message", {})
-        raw_content = msg.get("content", "")
-        reasoning = msg.get("reasoning_content", "")
-        
-        # If we have external reasoning but the JSON is missing the 'thinking' field, inject it
-        if reasoning and raw_content.strip().startswith("{"):
-            try:
-                parsed = json.loads(raw_content)
-                if "thinking" not in parsed or not parsed["thinking"]:
-                    # Create a new dict with 'thinking' as the FIRST key
-                    new_obj = {"thinking": reasoning}
-                    new_obj.update(parsed)
-                    raw_content = json.dumps(new_obj, ensure_ascii=False, indent=2)
-                    log.info("[%s] Injected reasoning_content into JSON 'thinking' field", kind)
-            except Exception:
-                pass # Not a valid JSON or other error, leave it as is
-
-        stats = _extract_usage(data, duration_ms)
-        model = data.get("model", "")
-        llm_activity.mark_done(call, stats=stats, model=model, raw_response=raw_content)
-        return {"raw": raw_content, "stats": stats, "modelName": model}
-    except asyncio.CancelledError:
-        llm_activity.mark_done(call, error="cancelled")
-        raise
-    except Exception as e:
-        llm_activity.mark_done(call, error=str(e))
-        raise
+    """Thin alias around `run_llm_buffered` for legacy callers. New code
+    should call `run_llm_buffered` directly — it's the same shape."""
+    return await run_llm_buffered(
+        messages,
+        settings=settings,
+        kind=kind,
+        session_id=session_id,
+        temperature=temperature, max_tokens=max_tokens,
+        top_p=top_p, top_k=top_k, min_p=min_p,
+        repeat_penalty=repeat_penalty,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        seed=seed,
+        grammar=grammar,
+    )

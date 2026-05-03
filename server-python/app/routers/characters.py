@@ -1,16 +1,15 @@
 """Character and facts management routes."""
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
 from app.database import get_db
-from app.services import job_manager, llm_activity
+from app.services import job_manager
 from app.services.job_manager import Job
-from app.services.llm import _build_body, _get_lock, generate_completion, sse_completion
+from app.services.llm import run_llm_buffered
 from app.services.meta_analysis import run_meta_analysis
 
 router = APIRouter()
@@ -177,48 +176,17 @@ Return JSON: put your reasoning in `thinking`, then the compressed data:
     ]
 
     async def _runner(j: Job):
-        # Stream LLM events into the job so the toast bar can show live
-        # progress for what is otherwise a several-second LLM call.
-        body = _build_body(
+        result = await run_llm_buffered(
             consolidate_messages,
+            settings=settings,
+            kind="consolidate",
+            session_id=session_id,
+            job=j,
             temperature=0.2,
             max_tokens=(settings.get("maxTokens", 4096)) * 3,
         )
-        call = llm_activity.register("consolidate", session_id)
-        llm_activity.attach_task(call, asyncio.current_task())
-        full: list[str] = []
-        usage: dict = {}
-        model_name = ""
         try:
-            async with _get_lock():
-                llm_activity.mark_running(call)
-                j.emit({"type": "llm_start", "kind": "consolidate", "callId": call.id})
-                provider_name = settings.get("provider", "llama-server")
-                provider_config = settings.get("providerConfig", {}).get(provider_name, {})
-                async for ev in sse_completion(body, provider_name=provider_name, provider_kwargs=provider_config, activity_call=call, kind="consolidate"):
-                    if ev["type"] == "delta":
-                        full.append(ev["text"])
-                    elif ev["type"] == "model":
-                        model_name = ev["name"]
-                    elif ev["type"] == "usage":
-                        usage = ev["data"]
-                    j.emit(ev)
-            stats = {
-                "promptTokens": usage.get("prompt_tokens"),
-                "completionTokens": usage.get("completion_tokens"),
-                "totalTokens": usage.get("total_tokens"),
-            }
-            llm_activity.mark_done(call, stats=stats, model=model_name, raw_response="".join(full))
-            j.emit({"type": "llm_done", "stats": stats, "modelName": model_name})
-        except asyncio.CancelledError:
-            llm_activity.mark_done(call, error="cancelled", raw_response="".join(full) or None)
-            raise
-        except Exception as e:
-            llm_activity.mark_done(call, error=str(e), raw_response="".join(full) or None)
-            raise
-
-        try:
-            parsed = json.loads("".join(full))
+            parsed = json.loads(result["raw"])
         except (json.JSONDecodeError, TypeError):
             parsed = None
 
