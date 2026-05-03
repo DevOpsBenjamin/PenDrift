@@ -1,7 +1,4 @@
 """OpenAI-compatible provider — talks to any API that follows the OpenAI spec.
-
-Used for local servers (like LM Studio, Ollama, vLLM) or other cloud providers
-(Together, OpenRouter, Mistral, etc.) that don't need a dedicated client.
 """
 from __future__ import annotations
 
@@ -18,36 +15,6 @@ from app.services import llm_activity
 from app.services.providers.base import ProgressLogger, start_heartbeat
 
 log = logging.getLogger("pendrift.providers.openai")
-
-_DEFAULT_PROMPTS = {
-    "narrative": """You are the narrator for PenDrift. Your role is to take the director's instructions and the current story state and produce a high-quality narrative chunk.
-
-Always propose 2-4 suggestions. Chunks vary in length.
-
-Rules:
-- Third person, past tense.
-- Show, don't tell.
-- Never break the fourth wall.
-- Vague directive -> make bold creative choices.""",
-
-    "meta": """You are a narrative analyst. Update character sheets and established facts based on the recent narrative.
-
-- Only update characters who actually APPEARED.
-- Merge facts aggressively.
-- Use the `thinking` field to justify your changes.""",
-
-    "query": """You are the story consultant. Answer questions about the story.
-
-- Be direct and analytical.
-- Reveal masked intents when relevant.
-- Keep it concise.""",
-
-    "template": """You are a character card converter. Extract metadata from the source text.""",
-    "rerun": """You are a character card converter.""",
-    "enrich": """You are a template improver.""",
-    "title": """Suggest a short chapter title.""",
-    "consolidate": """Consolidate character events and facts aggressively.""",
-}
 
 
 class OpenAICompatibleProvider:
@@ -93,6 +60,7 @@ class OpenAICompatibleProvider:
 
         if activity_call is not None:
             llm_activity.set_request(activity_call, payload)
+            log.info("[%s] Request payload dumped to data/llm-requests/%s", kind, activity_call.request_file)
 
         heartbeat_stop, hb_task = start_heartbeat(kind)
         progress = ProgressLogger(kind)
@@ -166,4 +134,5 @@ class OpenAICompatibleProvider:
                 log.warning("[%s] dropped %d malformed SSE chunks", kind, bad_chunks)
 
     def get_default_prompt(self, kind: str) -> str:
-        return _DEFAULT_PROMPTS.get(kind, "You are a helpful assistant.")
+        from app.services.prompts_registry import get_prompt
+        return get_prompt(kind, "openai") or "You are a helpful assistant."
