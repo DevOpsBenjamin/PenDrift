@@ -84,7 +84,7 @@
               :disabled="!editing.thinking"
               :title="editing.thinking ? 'View what the model understood when this version was generated' : 'No thinking on this version (manual edit or restore)'"
               @click="showThinking = true"
-            ></button>
+            >🧠</button>
           </div>
           <div class="flex gap-3">
             <button
