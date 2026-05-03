@@ -42,7 +42,10 @@ export const useNarrativeStore = defineStore('narrative', {
       this.chapters = chapters;
       const validId = chapters.find(c => c.id === this.currentChapterId);
       if (!validId && chapters.length > 0) {
-        this.currentChapterId = chapters[0].id;
+        // No prior selection (page refresh, fresh load) → land on the LATEST
+        // chapter so the user is at the live edge of the story by default.
+        // To re-read older content they pick an earlier chapter manually.
+        this.currentChapterId = chapters[chapters.length - 1].id;
       }
       this.chunks = [];
       this.generating = false;

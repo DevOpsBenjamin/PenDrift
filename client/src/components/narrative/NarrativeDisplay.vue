@@ -218,10 +218,22 @@ function scrollToBottomIfFollowing(el) {
   }
 }
 
-watch(() => props.chunks.length, async () => {
+// Set when the chapter id changes; consumed on the next chunks update so we
+// force-scroll to the bottom of the new chapter regardless of where the user
+// was. F5 / chapter switch always lands you at the live edge — to re-read
+// earlier you scroll up afterwards.
+let forceScrollOnNextChunks = false;
+watch(() => store.currentChapterId, () => {
+  forceScrollOnNextChunks = true;
+});
+
+watch(() => props.chunks, async () => {
+  const force = forceScrollOnNextChunks;
+  forceScrollOnNextChunks = false;
   const wasFollowing = isAtBottom(container.value);
   await nextTick();
-  if (wasFollowing && container.value) {
+  if (!container.value) return;
+  if (force || wasFollowing) {
     container.value.scrollTop = container.value.scrollHeight;
   }
 });
