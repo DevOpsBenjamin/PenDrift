@@ -1,9 +1,24 @@
 """Entry point for the PenDrift Python backend."""
+import asyncio
 import os
+import sys
 import copy
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Windows: switch from the default ProactorEventLoop to SelectorEventLoop.
+# Proactor uses I/O completion ports which can starve the accept loop while
+# a long-running async stream (httpx → llama-server SSE during prompt
+# processing) holds a socket. Symptom: heartbeats keep firing (the loop is
+# alive for timers) but new HTTP connections queue indefinitely — F5 spins,
+# Activity won't poll, etc. Selector trades a bit of throughput for fairness
+# and is the documented workaround for this pattern.
+# Trade-off: SelectorEventLoop on Windows doesn't support subprocess pipes
+# directly, but PenDrift only spawns llama-server with stdout/stderr=DEVNULL
+# (no pipe reading from Python), so this is safe.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import uvicorn
 from uvicorn.config import LOGGING_CONFIG
