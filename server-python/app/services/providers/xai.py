@@ -131,16 +131,13 @@ class XAIProvider:
         self,
         *,
         api_key: str | None = None,
-        base_url: str | None = None,
-        baseUrl: str | None = None,  # Support camelCase from presets
         model: str = "grok-beta",
         timeout_s: float = 600.0,
-        **kwargs,  # Absorb other preset fields
+        **kwargs,  # Ignore baseUrl from config, it's hardcoded
     ):
         self._api_key = api_key or os.environ.get("XAI_API_KEY")
-        self._base_url = (base_url or baseUrl or "https://api.x.ai/v1").rstrip("/")
-        # If env var is set, it takes precedence
-        self._base_url = os.environ.get("XAI_BASE_URL", self._base_url).rstrip("/")
+        # Hardcoded as requested
+        self._base_url = os.environ.get("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
         self._model = os.environ.get("XAI_MODEL", model)
         self._timeout = timeout_s
 
