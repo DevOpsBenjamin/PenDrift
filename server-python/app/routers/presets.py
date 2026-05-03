@@ -53,13 +53,35 @@ async def list_presets():
                 presets[data["id"]] = data
 
     # 2. Load user presets (allow isDefault flag here)
+    found_default_id = None
     if USER_SETTINGS_PATH.is_dir():
-        for f in USER_SETTINGS_PATH.glob("*.json"):
+        for f in sorted(USER_SETTINGS_PATH.glob("*.json")):
             data = _read(f, allow_default_flag=True)
             if data:
+                if data.get("isDefault"):
+                    if found_default_id:
+                        # We already found a default! This is a duplicate.
+                        # Clear it from the PREVIOUS one, keep it on the current one.
+                        presets[found_default_id].pop("isDefault", None)
+                        # Optional: clean up the file on disk too
+                        _cleanup_is_default(found_default_id)
+                    found_default_id = data["id"]
                 presets[data["id"]] = data
 
     return sorted(list(presets.values()), key=lambda x: x.get("name", "").lower())
+
+
+def _cleanup_is_default(preset_id: str):
+    """Remove isDefault flag from a specific user preset file."""
+    path = USER_SETTINGS_PATH / f"{preset_id}.json"
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("isDefault"):
+                data.pop("isDefault", None)
+                path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
 
 
 @router.get("/{preset_id}")
