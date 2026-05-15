@@ -36,7 +36,7 @@ Document the transformation in your `thinking` field: list each character whose 
 ## What you must extract and transform
 
 ### 1. CHARACTERS
-Extract ALL characters mentioned or implied anywhere in the card — description, scenario, relationships section, first message, alternate greetings. Even a single mention in a relationships list ("Erin: closest friend") means that character MUST get their own entry.
+Extract ALL characters mentioned or implied anywhere in the card — description, scenario, relationships section, first message, alternate greetings. Even a single mention in a relationships list ("Iris: closest friend") means that character MUST get their own entry.
 
 Each character becomes an entry with:
 - `name`: Character name. If the card uses {{user}}, keep it as `{{user}}`.
@@ -83,9 +83,9 @@ Extract these from EVERYWHERE in the card:
 Be generous — 3-6 masked intents for a rich card, more if the card is dense. Each should be a specific, actionable narrative driver, not a vague statement. Include which CHARACTER the intent belongs to.
 
 **Quality bar — concrete vs abstract:**
-- BAD: "Lauren is jealous of Tiffany" (label, narrator-tells, useless to the engine).
-- WEAK: "Lauren resents Tiffany's relationship with Ethan." (still abstract).
-- STRONG: "Lauren: voices 'practical' concerns about Tiffany while masking racial bias as concern, alternates performative sweetness with caustic asides — softens only when {{user}} agrees with her." (specific, behaviorally encoded, includes the conditional trigger).
+- BAD: "Vela is jealous of Mira" (label, narrator-tells, useless to the engine).
+- WEAK: "Vela resents Mira's relationship with Astor." (still abstract).
+- STRONG: "Vela: voices \"practical\" concerns about Mira while masking deeper bias as concern, alternates performative sweetness with caustic asides — softens only when {{user}} agrees with her." (specific, behaviorally encoded, includes the conditional trigger).
 
 The strong version is what the narrative engine can actually USE. The bad version is what to avoid.
 
@@ -95,7 +95,7 @@ The strong version is what the narrative engine can actually USE. The bad versio
 Analyze the first_mes, alternate greetings, mes_example, and system_prompt to extract WRITING STYLE instructions specific to this story:
 - POV and tense (e.g., "third person, present tense")
 - Prose style (e.g., "atmospheric and sensory" vs "snappy and dialogue-heavy")
-- Character voice specifics (e.g., "Yoojin mixes Korean slang with casual English")
+- Character voice specifics (e.g., "Yara mixes regional slang with casual English")
 - Pacing notes (e.g., "slow burn, tension builds through small gestures")
 - Physical description style (e.g., "emphasis on body language and micro-expressions")
 
@@ -107,7 +107,7 @@ Make the template reusable:
 - Named locations, companies, schools → variables if they could be swapped
 - Other character names that a user might want to customize
 
-**CRITICAL — variable substitution must be CONSISTENT**: every variable you declare in `variables` MUST also be used as `{{var_name}}` placeholders EVERYWHERE in the template (character descriptions, character names, initialState, scenario, maskedIntents, systemPromptAdditions). If you create `"sister_name": "Scarlet"`, then every occurrence of "Scarlet" in the rest of the JSON must be replaced with `{{sister_name}}`. NEVER mix declared variables with hardcoded names of the same character — that defeats the whole point of variables. If you're not going to swap a name, do NOT declare it as a variable.
+**CRITICAL — variable substitution must be CONSISTENT**: every variable you declare in `variables` MUST also be used as `{{var_name}}` placeholders EVERYWHERE in the template (character descriptions, character names, initialState, scenario, maskedIntents, systemPromptAdditions). If you create `"sister_name": "Iris"`, then every occurrence of "Iris" in the rest of the JSON must be replaced with `{{sister_name}}`. NEVER mix declared variables with hardcoded names of the same character — that defeats the whole point of variables. If you're not going to swap a name, do NOT declare it as a variable.
 
 ## The thinking field (REQUIRED, FIRST)
 
@@ -124,6 +124,21 @@ Your output JSON has `thinking` as its FIRST field. Use it for your full analyti
 7. Flag anything tricky or ambiguous
 
 Write AT LEAST 5-8 paragraphs in `thinking`. This is not optional — empty or minimal thinking produces a useless template. The structured fields after `thinking` rely on this analysis being done.
+
+## Quote characters in output strings — ASCII straight only
+
+Every string field in your JSON output (description, scenario, milestones, maskedIntents, characters[].description, characters[].initialState, systemPromptAdditions) MUST use:
+
+- ASCII straight double quote `"` (U+0022) for any quoted phrase / dialogue example / emphasized term.
+- ASCII straight apostrophe `'` (U+0027) ONLY for contractions: `it's`, `don't`, `J'ai`, `qu'il`. Never to wrap a phrase or label.
+
+Forbidden — every variant below is a bug:
+- `« »` (French guillemets)
+- `“ ”` curly / smart doubles (U+201C / U+201D)
+- `‘ ’` curly singles (U+2018 / U+2019)
+- A pair of `'` wrapping content like `'problematic'` or `'Dad? You home?'` — use `"…"` instead.
+
+The narrative prompt downstream enforces ASCII-only quoting; polluting the template here cascades into every chunk.
 
 ## Output format
 

@@ -27,8 +27,8 @@ Rule of thumb: if you find yourself writing a SHORTER version of an existing fie
 3. **PRESERVE narrative-defining details.** When fixing or filling, do NOT compress into generic adjectives. Specific details — body hints, kinks, scars, signature drinks, verbal tics, names they insist on being called, conditional emotional triggers — are narrative gold. *"Reverted to her maiden name and insists on the old married title in public despite the divorce"* is gold; *"proud and controlling"* is filler that already failed the character.
 4. **TREAT alternate_greetings as milestone candidates.** Multiple greetings in a card are usually timed moments along a single arc — Setup / Escalation / Climax — not independent stories. Walk each greeting and decide: is it already a milestone, should it be added, or doesn't it qualify? Conditional triggers visible in greetings (e.g., *"praise → softens"*) are masked intents, not milestones — don't confuse the two.
 5. **CORRECT euphemisms — labels AND specificity.**
-   - Labels: earlier passes may have softened the source's exact words ("subtle racism" → "subtle judgment", "cuckolding" → "infidelity dynamic", "netori" → "complicated romance"). Restore the source's exact labels.
-   - Specificity: if the source greeting is concrete and graphic, the resulting intent should preserve enough specificity to drive that exact behavior. A concrete intent like *"Character A wants {{user}} to do <specific act> to Character B and send B back marked"* should not have been compressed into the abstracted *"Character A has cuckolding fantasies"*. Restore the flesh.
+   - Labels: earlier passes may have softened the source's exact words (charged labels rewritten into milder synonyms). Restore the source's exact labels.
+   - Specificity: if the source greeting is concrete and graphic, the resulting intent should preserve enough specificity to drive that exact behavior. A concrete intent like *"Character A wants {{user}} to do <specific act> to Character B in a specific context"* should not have been compressed into an abstracted genre tag. Restore the flesh.
 6. **VERIFY variable substitutions** — every declared variable must appear as `{{var_name}}` everywhere in the template (character names/descriptions, scenario, masked intents, system prompt additions). A declared-but-unused variable is a bug.
 7. **PRESERVE** — keep good prose, character voice, well-extracted intents, scene framing as-is. Do not rewrite for the sake of rewriting.
 
@@ -79,7 +79,7 @@ Return ONLY valid JSON. Same schema as a fresh import — `thinking` FIRST:
 ## Rules
 
 - Keep `{{user}}` as `{{user}}`.
-- DO NOT EUPHEMIZE — preserve exact labels from the source (e.g., "racism", "incestuous", "cuckolding", "netori" stay as-is).
+- DO NOT EUPHEMIZE — preserve exact labels from the source rather than softening charged labels into milder synonyms.
 - DO NOT soften specificity — preserve concrete acts, gestures, signature details from greetings and structured sections.
 - Substitute every declared variable EVERYWHERE in the output.
 - Output language matches the source card's language.

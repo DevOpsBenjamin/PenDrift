@@ -31,8 +31,8 @@ Document the normalization in `thinking`: list each character whose age was kept
    - The new character's OWN goals, desires, fears, secrets, conditional triggers become maskedIntents about that character. A line like *"Goals: (1) maintain authority, (2) prove she can make {{user}} crawl back"* yields TWO distinct intents — do not collapse.
    - The new card often shows the same dynamic from a different angle: jealousies, secrets, attractions, fears that the first card only hinted at. Add these as new entries.
    - **Conditional triggers are CRITICAL.** If the new card says "if X happens, character reacts Y" (e.g., *"praise → softens, preens, almost girlish for a second"*, *"mention of his new flings → voice goes cold"*), encode each as a separate intent with the trigger AND reaction stated explicitly. These are the levers the narrative engine actually uses.
-   - DO NOT EUPHEMIZE labels — racism stays racism, cuckolding stays cuckolding, incestuous stays incestuous, netori stays netori.
-   - DO NOT soften specificity either. If a source greeting depicts a concrete scene or act, the resulting intent should preserve enough specificity to drive that exact behavior — not just the abstract category. A concrete intent like *"Character A wants {{user}} to do <specific act> to Character B while C is away, then send B back marked"* is far more useful than the abstracted *"Character A has cuckolding fantasies"*. The narrative engine needs the flesh, not just the genre tag.
+   - DO NOT EUPHEMIZE labels — preserve the source's exact terminology rather than softening charged labels into milder synonyms.
+   - DO NOT soften specificity either. If a source greeting depicts a concrete scene or act, the resulting intent should preserve enough specificity to drive that exact behavior — not just the abstract category. A concrete intent like *"Character A wants {{user}} to do <specific act> to Character B in a specific context"* is far more useful than an abstracted genre tag. The narrative engine needs the flesh, not just the genre tag.
    - If the new card contradicts an existing intent (e.g., one card says X is in love, the new one says X is faking), merge into a richer intent that captures the truth (e.g., "X feigns affection while actually planning to leave").
 
 3. **ENRICH milestones** with the new card's narrative arc.
@@ -62,15 +62,15 @@ If you find yourself producing an enriched template that's shorter than the inpu
 ## Good merge vs bad merge — concrete example
 
 Suppose the current template has:
-> Tiffany: "The girlfriend of {{son_name}}, a young Asian-American woman whose relationship with Ethan is under discussion."
+> Mira: "The girlfriend of {{son_name}}, a young woman whose relationship with Astor is under discussion."
 
-And the new card describes Tiffany in detail (physical traits, anxious speech, secret past with {{user}}, conditional triggers).
+And the new card describes Mira in detail (physical traits, anxious speech, secret past with {{user}}, conditional triggers).
 
-BAD merge: keep Tiffany's one-liner because "she's already in the template". This wastes the new card.
+BAD merge: keep Mira's one-liner because "she's already in the template". This wastes the new card.
 
-GOOD merge: REPLACE Tiffany's one-liner with a rich entry mined from her card — physical, speech patterns, masked intents about her hidden hookup, conditional reactions to {{user}}'s presence. The other characters (Ethan, Lauren) keep their existing rich entries unchanged because the new card doesn't supersede them.
+GOOD merge: REPLACE Mira's one-liner with a rich entry mined from her card — physical, speech patterns, masked intents about her hidden hookup, conditional reactions to {{user}}'s presence. The other characters (Astor, Vela) keep their existing rich entries unchanged because the new card doesn't supersede them.
 
-The output is strictly richer than the input on Tiffany, unchanged on the others. That's a successful enrich.
+The output is strictly richer than the input on Mira, unchanged on the others. That's a successful enrich.
 
 ## What NOT to do
 
@@ -95,6 +95,15 @@ Audit and explain what you're merging. Be specific:
 8. **Cross-card inconsistencies** — anything the two cards disagree on, and how you're resolving it.
 
 A minimal thinking ("everything merged fine") almost certainly means you didn't audit. Do the work.
+
+## Quote characters in output strings — ASCII straight only
+
+Every string field in your JSON output MUST use:
+
+- ASCII straight double quote `"` (U+0022) for any quoted phrase / dialogue example / emphasized term.
+- ASCII straight apostrophe `'` (U+0027) ONLY for contractions: `it's`, `don't`, `J'ai`, `qu'il`. Never to wrap a phrase or label.
+
+Forbidden — `« »`, curly `“ ” ‘ ’`, paired ASCII `'` wrapping a phrase. Use `"…"` instead. The narrative prompt downstream enforces ASCII-only quoting; if the existing template you are merging contains any non-ASCII variant or paired single-quote phrase, normalize it as you copy it forward.
 
 ## Output format
 
