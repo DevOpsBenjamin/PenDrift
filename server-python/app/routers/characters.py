@@ -9,24 +9,41 @@ from fastapi import APIRouter, HTTPException
 from app.database import get_db
 from app.services import job_manager
 from app.services.job_manager import Job
-from app.services.llm import run_llm_buffered
 from app.services.meta_analysis import run_meta_analysis
 
 router = APIRouter()
+
+
+_CHAR_COLUMNS = (
+    "name, current_state, traits, key_events, identity, voice, appearance, "
+    "backstory, backstory_additions, masked_intents, last_updated"
+)
+
+
+def _row_to_character(r) -> dict:
+    return {
+        "name": r[0],
+        "currentState": r[1],
+        "traits": json.loads(r[2]),
+        "keyEvents": json.loads(r[3]),
+        "identity": r[4] or "",
+        "voice": r[5] or "",
+        "appearance": r[6] or "",
+        "backstory": r[7] or "",
+        "backstoryAdditions": json.loads(r[8]) if r[8] else [],
+        "maskedIntents": json.loads(r[9]) if r[9] else [],
+        "lastUpdated": r[10],
+    }
 
 
 @router.get("")
 async def list_characters(session_id: str):
     db = await get_db()
     rows = await db.execute_fetchall(
-        "SELECT name, current_state, traits, key_events, last_updated FROM characters WHERE session_id = ?",
+        f"SELECT {_CHAR_COLUMNS} FROM characters WHERE session_id = ?",
         (session_id,),
     )
-    return [
-        {"name": r[0], "currentState": r[1], "traits": json.loads(r[2]),
-         "keyEvents": json.loads(r[3]), "lastUpdated": r[4]}
-        for r in rows
-    ]
+    return [_row_to_character(r) for r in rows]
 
 
 @router.post("")
@@ -44,13 +61,30 @@ async def add_character(session_id: str, body: dict):
 
     now = datetime.now(timezone.utc).isoformat()
     await db.execute(
-        "INSERT INTO characters (session_id, name, current_state, traits, key_events, last_updated) VALUES (?,?,?,?,?,?)",
-        (session_id, name, body.get("currentState", ""),
-         json.dumps(body.get("traits", [])), json.dumps(body.get("keyEvents", [])), now),
+        """INSERT INTO characters (
+            session_id, name, current_state, traits, key_events,
+            identity, voice, appearance, backstory, backstory_additions,
+            masked_intents, last_updated
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            session_id, name, body.get("currentState", ""),
+            json.dumps(body.get("traits", [])),
+            json.dumps(body.get("keyEvents", [])),
+            body.get("identity", "") or "",
+            body.get("voice", "") or "",
+            body.get("appearance", "") or "",
+            body.get("backstory", "") or "",
+            json.dumps(body.get("backstoryAdditions", []) or []),
+            json.dumps(body.get("maskedIntents", []) or []),
+            now,
+        ),
     )
     await db.commit()
-    return {"name": name, "currentState": body.get("currentState", ""),
-            "traits": body.get("traits", []), "keyEvents": body.get("keyEvents", []), "lastUpdated": now}
+    row = await db.execute_fetchall(
+        f"SELECT {_CHAR_COLUMNS} FROM characters WHERE session_id = ? AND name = ?",
+        (session_id, name),
+    )
+    return _row_to_character(row[0])
 
 
 @router.put("/{char_name}")
@@ -64,27 +98,35 @@ async def update_character(session_id: str, char_name: str, body: dict):
 
     now = datetime.now(timezone.utc).isoformat()
     updates = ["last_updated = ?"]
-    params = [now]
-    if "currentState" in body:
-        updates.append("current_state = ?")
-        params.append(body["currentState"])
-    if "traits" in body:
-        updates.append("traits = ?")
-        params.append(json.dumps(body["traits"]))
-    if "keyEvents" in body:
-        updates.append("key_events = ?")
-        params.append(json.dumps(body["keyEvents"]))
+    params: list = [now]
+
+    field_map = [
+        ("currentState", "current_state", None),
+        ("identity", "identity", None),
+        ("voice", "voice", None),
+        ("appearance", "appearance", None),
+        ("backstory", "backstory", None),
+        ("traits", "traits", "json"),
+        ("keyEvents", "key_events", "json"),
+        ("backstoryAdditions", "backstory_additions", "json"),
+        ("maskedIntents", "masked_intents", "json"),
+    ]
+    for body_key, col, transform in field_map:
+        if body_key in body:
+            updates.append(f"{col} = ?")
+            value = body[body_key]
+            params.append(json.dumps(value) if transform == "json" else (value or ""))
+
     params.extend([session_id, char_name])
 
     await db.execute(f"UPDATE characters SET {', '.join(updates)} WHERE session_id = ? AND name = ?", params)
     await db.commit()
 
     row = await db.execute_fetchall(
-        "SELECT name, current_state, traits, key_events, last_updated FROM characters WHERE session_id = ? AND name = ?",
+        f"SELECT {_CHAR_COLUMNS} FROM characters WHERE session_id = ? AND name = ?",
         (session_id, char_name),
     )
-    r = row[0]
-    return {"name": r[0], "currentState": r[1], "traits": json.loads(r[2]), "keyEvents": json.loads(r[3]), "lastUpdated": r[4]}
+    return _row_to_character(row[0])
 
 
 @router.post("/update")
@@ -131,10 +173,21 @@ async def trigger_meta(session_id: str, body: dict):
 
 
 @router.post("/consolidate")
-async def consolidate(session_id: str):
+async def consolidate(session_id: str, body: dict | None = None):
+    """Run a cleanup-mode meta call to consolidate character sheets and facts.
+
+    Internally this is `run_meta_analysis` with a director-note hint that
+    triggers the cleanup-mode branch of meta.md. The prompt's precision rules
+    are still in effect — the model decides what to merge / drop, the hint
+    just tells it to be aggressive about consolidation.
+
+    Body (optional): { "note": "<director's free-text cleanup hint>" }
+    """
     db = await get_db()
 
-    session_row = await db.execute_fetchall("SELECT settings_preset_id FROM sessions WHERE id = ?", (session_id,))
+    session_row = await db.execute_fetchall(
+        "SELECT settings_preset_id FROM sessions WHERE id = ?", (session_id,)
+    )
     if not session_row:
         raise HTTPException(404, "Session not found")
 
@@ -144,81 +197,36 @@ async def consolidate(session_id: str):
     eff_id = raw_preset_id if (raw_preset_id and raw_preset_id != "default") else find_default_preset_id()
     settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
 
-    char_rows = await db.execute_fetchall(
-        "SELECT name, current_state, traits, key_events FROM characters WHERE session_id = ?", (session_id,)
+    director_note = (body or {}).get("note") or (
+        "Cleanup pass — review character sheets and facts for redundancy. Merge near-duplicate "
+        "key events, drop traits that restate identity, tighten currentState, drop facts that are "
+        "obvious from character sheets, and re-evaluate any milestones that no longer fit."
     )
-    characters = [{"name": r[0], "currentState": r[1], "traits": json.loads(r[2]), "keyEvents": json.loads(r[3])} for r in char_rows]
 
-    fact_rows = await db.execute_fetchall("SELECT fact FROM facts WHERE session_id = ? ORDER BY id", (session_id,))
-    facts = [r[0] for r in fact_rows]
-
-    consolidate_messages = [
-        {"role": "system", "content": """You are a data compressor for character sheets and story facts.
-
-Your job: AGGRESSIVELY consolidate and compress. Be ruthless about merging.
-
-KEY EVENTS rules:
-- Multiple events about the SAME topic MUST be merged into ONE entry.
-- Keep events VAGUE and SHORT. No unnecessary details.
-- Max 7 events per character. If over 7, merge related events aggressively.
-
-TRAITS rules:
-- Personality and behavioral ONLY. No physical descriptions.
-- Max 6 traits per character. Merge similar ones.
-
-FACTS rules:
-- VAGUE and HIGH LEVEL.
-- Multiple facts about the same subject MUST be merged into ONE.
-- Max 10 facts total. Merge aggressively.
-- Remove facts that are obvious from character sheets.
-
-Return JSON: put your reasoning in `thinking`, then the compressed data:
-{
-  "thinking": "brief reasoning",
-  "characters": [{ "name": "", "currentState": "", "traits": [], "keyEvents": [] }],
-  "facts": ["fact1", "fact2"]
-}"""},
-        {"role": "user", "content": f"## Characters\n{json.dumps(characters, indent=2)}\n\n## Facts\n{json.dumps(facts, indent=2)}\n\nConsolidate and compress."},
+    interval = settings.get("chunkUpdateInterval", 10)
+    chunk_rows = await db.execute_fetchall(
+        '''SELECT c.id, c.chapter_id, c."order", c.active_version, c.versions
+           FROM chunks c
+           JOIN chapters ch ON c.chapter_id = ch.id
+           WHERE c.session_id = ?
+           ORDER BY ch."order" DESC, c."order" DESC
+           LIMIT ?''',
+        (session_id, interval),
+    )
+    recent = [
+        {"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]}
+        for r in reversed(chunk_rows)
     ]
 
     async def _runner(j: Job):
-        result = await run_llm_buffered(
-            consolidate_messages,
-            settings=settings,
-            kind="consolidate",
-            session_id=session_id,
-            job=j,
-            temperature=0.2,
-            max_tokens=(settings.get("maxTokens", 4096)) * 3,
+        result = await run_meta_analysis(
+            session_id, recent, settings, job=j, director_note=director_note,
         )
-        try:
-            parsed = json.loads(result["raw"])
-        except (json.JSONDecodeError, TypeError):
-            parsed = None
-
-        now = datetime.now(timezone.utc).isoformat()
-        if parsed and parsed.get("characters"):
-            for update in parsed["characters"]:
-                await db.execute(
-                    "UPDATE characters SET current_state = ?, traits = ?, key_events = ?, last_updated = ? WHERE session_id = ? AND name = ?",
-                    (update.get("currentState", ""), json.dumps(update.get("traits", [])),
-                     json.dumps(update.get("keyEvents", [])), now, session_id, update["name"]),
-                )
-        if parsed and parsed.get("facts"):
-            await db.execute("DELETE FROM facts WHERE session_id = ?", (session_id,))
-            for fact in parsed["facts"]:
-                await db.execute("INSERT INTO facts (session_id, fact, created_at) VALUES (?,?,?)", (session_id, fact, now))
-        await db.commit()
-
-        updated_chars = await list_characters(session_id)
-        j.set_result({
-            "characters": updated_chars,
-            "facts": parsed.get("facts", facts) if parsed else facts,
-        })
+        j.set_result(result)
 
     job = await job_manager.run_and_wait(
         kind="consolidate",
-        label=f"Consolidate · {len(characters)} chars / {len(facts)} facts",
+        label="Consolidate (cleanup-mode meta)",
         session_id=session_id,
         runner=_runner,
     )

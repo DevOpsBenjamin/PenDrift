@@ -91,7 +91,29 @@ class XAIProvider:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 headers = {"Authorization": f"Bearer {self._api_key}"}
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                    resp.raise_for_status()
+                    if resp.status_code >= 400:
+                        # Read the body BEFORE the stream context closes — once
+                        # we exit `async with client.stream`, the response body
+                        # is gone and we can't recover xAI's error message.
+                        # Common 4xx reasons: 403 = content moderation block,
+                        # 401 = bad API key, 402 = payment required, 429 = rate
+                        # limited. Surface the body so the user sees WHY.
+                        body_chunks: list[str] = []
+                        try:
+                            async for raw in resp.aiter_bytes():
+                                body_chunks.append(raw.decode("utf-8", errors="replace"))
+                        except Exception:
+                            pass
+                        body_text = "".join(body_chunks).strip()
+                        log.error(
+                            "[%s] xAI API error %d: %s",
+                            kind, resp.status_code, body_text or "<empty body>",
+                        )
+                        raise httpx.HTTPStatusError(
+                            f"xAI {resp.status_code}: {body_text[:500] or 'no error body'}",
+                            request=resp.request,
+                            response=resp,
+                        )
                     async for line in resp.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -139,9 +161,9 @@ class XAIProvider:
                             )
 
                         yield {"type": "delta", "text": piece}
-        except httpx.HTTPStatusError as e:
-            await e.response.aread()
-            log.error("[%s] xAI API error %d: %s", kind, e.response.status_code, e.response.text)
+        except httpx.HTTPStatusError:
+            # Already logged with full body in the status check above; just
+            # re-raise so the caller can mark the activity as errored.
             raise
         finally:
             heartbeat_stop.set()

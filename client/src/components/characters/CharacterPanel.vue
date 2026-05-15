@@ -6,54 +6,78 @@
         v-if="updating"
         class="text-[10px] normal-case tracking-normal text-accent font-normal animate-pulse"
       >Analyzing...</span>
+      <button
+        v-if="revealed"
+        class="ml-auto text-[10px] normal-case tracking-normal text-text-muted hover:text-accent transition-colors"
+        @click="revealed = false"
+        title="Hide spoiler content"
+      >hide</button>
     </h3>
-    <div v-if="characters.length === 0" class="text-xs text-text-muted italic">
-      No characters yet
+
+    <!-- Spoiler gate — covers the whole panel. One confirmation per visit;
+         once revealed, individual character clicks open the edit modal directly. -->
+    <div v-if="!revealed" class="space-y-2">
+      <div class="flex items-start gap-2 p-3 bg-warning/5 border border-warning/30 rounded-lg">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <div class="text-[11px] text-text-secondary leading-relaxed">
+          Character sheets, hidden drivers, established facts, and analyst flags can spoil plot, secrets, and decoded subtext.
+        </div>
+      </div>
+      <button
+        class="w-full py-1.5 text-xs text-text-secondary border border-warning/40 rounded-lg
+               hover:bg-warning/10 hover:text-text-primary transition-all cursor-pointer"
+        @click="requestReveal"
+      >Reveal characters</button>
     </div>
-    <ul class="space-y-1">
-      <li
-        v-for="char in characters"
-        :key="char.name"
-        class="flex items-center justify-between px-2 py-1.5 rounded-md text-sm text-text-secondary
-               hover:bg-bg-surface/50 transition-all"
-      >
-        <span class="truncate">{{ char.name }}</span>
-        <button
-          class="text-text-muted hover:text-accent transition-colors shrink-0 p-0.5"
-          @click="requestInspect(char)"
-          title="View/edit character sheet"
+
+    <template v-else>
+      <div v-if="characters.length === 0" class="text-xs text-text-muted italic">
+        No characters yet
+      </div>
+      <ul class="space-y-1">
+        <li
+          v-for="char in characters"
+          :key="char.name"
+          class="flex items-center justify-between px-2 py-1.5 rounded-md text-sm text-text-secondary
+                 hover:bg-bg-surface/50 transition-all"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
-        </button>
-      </li>
-    </ul>
+          <span class="truncate">{{ char.name }}</span>
+          <button
+            class="text-text-muted hover:text-accent transition-colors shrink-0 p-0.5"
+            @click="inspect(char)"
+            title="View/edit character sheet"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </button>
+        </li>
+      </ul>
 
-    <!-- Add character button -->
-    <button
-      class="w-full mt-2 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
-             rounded-lg transition-all cursor-pointer border border-dashed border-border"
-      @click="addCharacter"
-    >+ Add Character</button>
+      <button
+        class="w-full mt-2 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
+               rounded-lg transition-all cursor-pointer border border-dashed border-border"
+        @click="addCharacter"
+      >+ Add Character</button>
 
-    <!-- Facts button -->
-    <button
-      class="w-full mt-1 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
-             rounded-lg transition-all cursor-pointer"
-      @click="$emit('editFacts')"
-    >Established Facts</button>
+      <button
+        class="w-full mt-1 py-1.5 text-xs text-text-muted hover:text-text-secondary hover:bg-bg-surface/50
+               rounded-lg transition-all cursor-pointer"
+        @click="$emit('editFacts')"
+      >Established Facts</button>
 
-    <!-- Consistency warnings -->
-    <div v-if="flags.length" class="mt-3 space-y-1">
-      <h4 class="text-[10px] font-semibold uppercase tracking-wider text-warning mb-1">Flags</h4>
-      <p
-        v-for="(flag, i) in flags"
-        :key="i"
-        class="text-[10px] text-warning/80 leading-relaxed bg-warning/5 rounded px-2 py-1"
-      >{{ flag }}</p>
-    </div>
+      <div v-if="flags.length" class="mt-3 space-y-1">
+        <h4 class="text-[10px] font-semibold uppercase tracking-wider text-warning mb-1">Flags</h4>
+        <p
+          v-for="(flag, i) in flags"
+          :key="i"
+          class="text-[10px] text-warning/80 leading-relaxed bg-warning/5 rounded px-2 py-1"
+        >{{ flag }}</p>
+      </div>
+    </template>
 
     <!-- Spoiler warning -->
     <Teleport to="body">
@@ -69,7 +93,7 @@
             </svg>
           </div>
           <h3 class="text-base font-semibold mb-2">Spoiler Warning</h3>
-          <p class="text-sm text-text-secondary mb-5">Character sheets may reveal hidden plot details, secret motivations, and narrative twists.</p>
+          <p class="text-sm text-text-secondary mb-5">Character sheets, hidden drivers, established facts, and analyst flags can reveal plot details, secret motivations, and narrative twists. Once revealed, you can hide them again from the panel header.</p>
           <div class="flex justify-center gap-3">
             <button
               class="px-4 py-2 border border-border rounded-lg text-text-secondary text-sm
@@ -79,7 +103,7 @@
             <button
               class="px-5 py-2 bg-accent rounded-lg text-white text-sm font-semibold
                      hover:bg-accent-hover transition-colors cursor-pointer"
-              @click="confirmInspect"
+              @click="confirmReveal"
             >Show me</button>
           </div>
         </div>
@@ -106,7 +130,42 @@
 
           <div class="space-y-4">
             <div>
-              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Current State</label>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Identity <span class="normal-case font-normal text-text-muted/60">— durable self-conception</span></label>
+              <textarea v-model="editing.identity" rows="3"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Voice <span class="normal-case font-normal text-text-muted/60">— speech / register</span></label>
+              <textarea v-model="editing.voice" rows="2"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Appearance</label>
+              <textarea v-model="editing.appearance" rows="2"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Backstory <span class="normal-case font-normal text-text-muted/60">— past, set at session start</span></label>
+              <textarea v-model="editing.backstory" rows="3"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Backstory additions <span class="normal-case font-normal text-text-muted/60">— one per line, append-only</span></label>
+              <textarea v-model="backstoryAdditionsText" rows="3"
+                class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1 block">Current State <span class="normal-case font-normal text-text-muted/60">— dynamic, replaces each meta cycle</span></label>
               <textarea v-model="editing.currentState" rows="3"
                 class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
                        resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
@@ -124,6 +183,13 @@
               <textarea v-model="eventsText" rows="4"
                 class="w-full px-3 py-2 bg-bg-primary border border-border rounded-lg text-sm text-text-primary
                        resize-y focus:outline-none focus:border-accent transition-colors"></textarea>
+            </div>
+
+            <div>
+              <label class="text-[11px] font-semibold uppercase tracking-wider text-warning mb-1 block">Hidden drivers <span class="normal-case font-normal text-text-muted/60">— one per line, removed on resolution</span></label>
+              <textarea v-model="maskedIntentsText" rows="3"
+                class="w-full px-3 py-2 bg-bg-primary border border-warning/40 rounded-lg text-sm text-text-primary
+                       resize-y focus:outline-none focus:border-warning transition-colors"></textarea>
             </div>
 
             <div v-if="editing.lastUpdated" class="text-[10px] text-text-muted">
@@ -160,29 +226,40 @@ const props = defineProps({
 
 const emit = defineEmits(['editFacts', 'saveCharacter', 'addCharacter']);
 
+// Spoiler gate — covers the whole panel. One confirmation per visit; once
+// `revealed` is true, individual character clicks open the edit modal directly
+// without re-prompting. Resets when the component remounts (page navigation).
+const revealed = ref(false);
 const showWarning = ref(false);
-const pendingChar = ref(null);
 const editing = ref(null);
 
-const traitsText = computed({
-  get: () => (editing.value?.traits || []).join('\n'),
-  set: (val) => { if (editing.value) editing.value.traits = val.split('\n').map(s => s.trim()).filter(Boolean); },
-});
+function lineArrayBinding(field) {
+  return computed({
+    get: () => (editing.value?.[field] || []).join('\n'),
+    set: (val) => {
+      if (!editing.value) return;
+      editing.value[field] = val.split('\n').map(s => s.trim()).filter(Boolean);
+    },
+  });
+}
 
-const eventsText = computed({
-  get: () => (editing.value?.keyEvents || []).join('\n'),
-  set: (val) => { if (editing.value) editing.value.keyEvents = val.split('\n').map(s => s.trim()).filter(Boolean); },
-});
+const traitsText = lineArrayBinding('traits');
+const eventsText = lineArrayBinding('keyEvents');
+const backstoryAdditionsText = lineArrayBinding('backstoryAdditions');
+const maskedIntentsText = lineArrayBinding('maskedIntents');
 
-function requestInspect(char) {
-  pendingChar.value = char;
+function requestReveal() {
   showWarning.value = true;
 }
 
-function confirmInspect() {
+function confirmReveal() {
   showWarning.value = false;
-  editing.value = JSON.parse(JSON.stringify(pendingChar.value));
-  pendingChar.value = null;
+  revealed.value = true;
+}
+
+function inspect(char) {
+  // No warning here — the panel-level reveal already covered consent.
+  editing.value = JSON.parse(JSON.stringify(char));
 }
 
 function saveCharacter() {
@@ -196,9 +273,15 @@ function addCharacter() {
   if (!name?.trim()) return;
   editing.value = {
     name: name.trim(),
+    identity: '',
+    voice: '',
+    appearance: '',
+    backstory: '',
+    backstoryAdditions: [],
     currentState: '',
     traits: [],
     keyEvents: [],
+    maskedIntents: [],
     lastUpdated: new Date().toISOString(),
     _isNew: true,
   };

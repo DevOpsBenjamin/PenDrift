@@ -2,12 +2,16 @@
  * Ask the Narrator — analytical Q&A about the story, streamed as SSE.
  * The model has full session context (chars, facts, masked intents, recent
  * chunks) but answers in plain analytical prose, not narrative.
+ *
+ * History is loaded server-side from the `session_queries` table — clients
+ * no longer pass it in the body. This way closing the modal mid-call doesn't
+ * lose the question; the next reopen sees the persisted result.
  */
-export async function streamQuery(sessionId, { question, history }, onEvent, signal) {
+export async function streamQuery(sessionId, { question }, onEvent, signal) {
   const resp = await fetch(`/api/sessions/${sessionId}/query/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, history }),
+    body: JSON.stringify({ question }),
     signal,
   });
   if (!resp.ok) {
@@ -33,4 +37,17 @@ export async function streamQuery(sessionId, { question, history }, onEvent, sig
       }
     }
   }
+}
+
+/**
+ * Fetch every persisted Q&A for a session. Used by the modal on mount so the
+ * history survives close/reopen, page reloads, and cross-device access.
+ */
+export async function getQueries(sessionId) {
+  const resp = await fetch(`/api/sessions/${sessionId}/queries`);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Failed to load queries: ${resp.status} ${text}`);
+  }
+  return resp.json();
 }

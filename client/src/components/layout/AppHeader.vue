@@ -62,12 +62,9 @@ import { useJobsStore } from '../../stores/jobs.js';
 
 const mobileNav = ref(false);
 const jobsStore = useJobsStore();
-// Hide the visual `|` separator when one of the two sides has nothing to show,
+// Hide the visual `|` separator when there are no active jobs to display,
 // otherwise we'd float a lone bar in the middle of the header.
-const HIDDEN_KINDS = new Set(['narrative', 'regenerate']);
-const showSeparator = computed(() =>
-  jobsStore.active.some(j => !HIDDEN_KINDS.has(j.kind))
-);
+const showSeparator = computed(() => jobsStore.active.length > 0);
 const links = [
   { to: '/', label: 'Sessions' },
   { to: '/templates', label: 'Templates' },

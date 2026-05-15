@@ -88,11 +88,12 @@
         </div>
       </div>
 
-      <!-- Regenerate modal — editable directive -->
+      <!-- Regenerate modal — editable directive. Backdrop click does NOT close
+           (would lose an in-progress directive on a stray click). Use the X
+           button or Cancel. -->
       <div
         v-if="showRegenModal"
         class="fixed inset-0 bg-bg-overlay backdrop-blur-sm flex items-center justify-center z-50 p-4"
-        @click.self="showRegenModal = false"
       >
         <div class="bg-bg-secondary border border-border rounded-2xl p-6 w-full max-w-lg shadow-2xl">
           <div class="flex items-center justify-between mb-4">

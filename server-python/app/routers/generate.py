@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from app.database import get_db
 from app.services.llm_stream import stream_narrative, stream_query
-from app.services.prompts import build_messages, build_query_messages
+from app.services.prompts import build_messages, build_query_messages, build_epilogue_messages
 from app.services.meta_analysis import run_meta_analysis
 from app.services import llm_process, template_store, job_manager
 from app.services.job_manager import Job
@@ -54,6 +54,12 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
     if not session_rows:
         raise HTTPException(404, "Session not found")
 
+    finished_row = await db.execute_fetchall(
+        "SELECT finished_at FROM sessions WHERE id = ?", (session_id,)
+    )
+    if finished_row and finished_row[0][0] is not None:
+        raise HTTPException(409, "Cannot generate: session is finished (read-only). Reopen the session first.")
+
     chapter_rows = await db.execute_fetchall(
         "SELECT id, finalized FROM chapters WHERE id = ? AND session_id = ?", (chapter_id, session_id)
     )
@@ -63,9 +69,10 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
         raise HTTPException(400, "Cannot generate in a finalized chapter")
 
     session_row = await db.execute_fetchall(
-        "SELECT settings_preset_id, template_id, last_meta_after_chunk_index, template_version FROM sessions WHERE id = ?", (session_id,)
+        "SELECT settings_preset_id, template_id, last_meta_after_chunk_index, template_version, pending_milestones FROM sessions WHERE id = ?", (session_id,)
     )
-    preset_id, template_id, last_meta_idx, template_version = session_row[0]
+    preset_id, template_id, last_meta_idx, template_version, pending_milestones_raw = session_row[0]
+    pending_milestones = json.loads(pending_milestones_raw) if pending_milestones_raw else []
 
     from app.config import DATA_DIR
     from app.routers.presets import find_default_preset_id
@@ -111,9 +118,27 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
                 job.emit({"type": "meta_done", "error": str(e)})
 
     char_rows = await db.execute_fetchall(
-        "SELECT name, current_state, traits, key_events FROM characters WHERE session_id = ?", (session_id,)
+        """SELECT name, current_state, traits, key_events,
+                  identity, voice, appearance, backstory,
+                  backstory_additions, masked_intents
+           FROM characters WHERE session_id = ?""",
+        (session_id,),
     )
-    characters = [{"name": r[0], "currentState": r[1], "traits": json.loads(r[2]), "keyEvents": json.loads(r[3])} for r in char_rows]
+    characters = [
+        {
+            "name": r[0],
+            "currentState": r[1] or "",
+            "traits": json.loads(r[2]) if r[2] else [],
+            "keyEvents": json.loads(r[3]) if r[3] else [],
+            "identity": r[4] or "",
+            "voice": r[5] or "",
+            "appearance": r[6] or "",
+            "backstory": r[7] or "",
+            "backstoryAdditions": json.loads(r[8]) if r[8] else [],
+            "maskedIntents": json.loads(r[9]) if r[9] else [],
+        }
+        for r in char_rows
+    ]
 
     fact_rows = await db.execute_fetchall("SELECT fact FROM facts WHERE session_id = ? ORDER BY id", (session_id,))
     facts = [r[0] for r in fact_rows]
@@ -136,6 +161,7 @@ async def _prepare_generation(session_id: str, chapter_id: str, directive: str, 
         chunks=chunks, directive=directive, important_facts=facts,
         last_meta_after_chunk_index=last_meta_idx,
         previous_chapter_chunks=previous_chapter_chunks,
+        pending_milestones=pending_milestones,
     )
 
     think_budget = settings.get("thinkingTokens", 1500)
@@ -368,10 +394,235 @@ async def generate_streaming(session_id: str, body: dict):
     )
 
 
-async def _query_pipeline(job: Job, messages: list[dict], settings: dict, session_id: str):
-    """Runner: stream the consultant LLM and forward every event into the
-    job's event log. Model auto-load + lock + activity tracking are all
-    handled by stream_query → run_llm_stream."""
+async def _epilogue_pipeline(job: Job, chapter_id: str, messages: list[dict], settings: dict):
+    """Runner: stream the epilogue LLM, save the result as a normal narrative
+    chunk in the Epilogue chapter. Reuses `stream_narrative` because the
+    epilogue prompt outputs the same `{narrative}` shape (no `suggestions`).
+
+    Does NOT mark the session as finished — that's a separate explicit step
+    (POST /finish/validate) so the user can review/regenerate before locking.
+    """
+    session_id = job.session_id
+    result_for_save: dict | None = None
+    try:
+        async for ev in stream_narrative(
+            messages,
+            temperature=settings.get("temperature"),
+            max_tokens=settings.get("thinkingTokens", 1500) + settings.get("narrativeTokens", 500) * 4,
+            top_p=settings.get("topP"),
+            top_k=settings.get("topK"),
+            min_p=settings.get("minP"),
+            repeat_penalty=settings.get("repeatPenalty"),
+            presence_penalty=settings.get("presencePenalty"),
+            frequency_penalty=settings.get("frequencyPenalty"),
+            seed=settings.get("seed"),
+            session_id=session_id,
+            settings=settings,
+        ):
+            if ev["type"] == "done":
+                result_for_save = ev["result"]
+                continue
+            job.emit(ev)
+
+        if not result_for_save or not result_for_save.get("narrative"):
+            job.emit({"type": "error", "message": "LLM returned empty epilogue"})
+            return
+
+        db = await get_db()
+        existing = await db.execute_fetchall(
+            "SELECT COUNT(*) FROM chunks WHERE chapter_id = ?", (chapter_id,)
+        )
+        next_order = existing[0][0]
+        chunk_out = await _save_narrative_chunk(
+            session_id, chapter_id, "[epilogue]", False,
+            result_for_save, next_order,
+        )
+        job.emit({
+            "type": "done",
+            "kind": "epilogue",
+            "chunk": chunk_out,
+            "thinking": result_for_save.get("thinking", ""),
+        })
+    except asyncio.CancelledError:
+        job.emit({"type": "error", "message": "cancelled"})
+        raise
+    except Exception as e:
+        log.exception("Epilogue pipeline failed")
+        job.emit({"type": "error", "message": str(e)})
+
+
+@router.post("/finish")
+async def finish_session(session_id: str):
+    """Generate the epilogue for this session.
+
+    Behavior:
+      - 409 if the session is already finished (use POST /finish/reopen first).
+      - 409 if an Epilogue chapter already has a chunk (use the chunk's regen
+        button to produce another version, don't re-trigger /finish).
+      - If the last chapter is empty and not finalized, it is renamed to
+        "Epilogue" and used. Otherwise a new "Epilogue" chapter is created.
+      - The epilogue is generated as a normal narrative chunk (saved with
+        directive="[epilogue]"). The session is NOT yet marked finished —
+        the user reviews the chunk and explicitly POSTs /finish/validate
+        when satisfied.
+    """
+    db = await get_db()
+    sess = await db.execute_fetchall(
+        "SELECT settings_preset_id, template_id, template_version, finished_at FROM sessions WHERE id = ?",
+        (session_id,),
+    )
+    if not sess:
+        raise HTTPException(404, "Session not found")
+    preset_id, template_id, template_version, finished_at = sess[0]
+    if finished_at is not None:
+        raise HTTPException(409, "Session is already finished. Reopen it first if you want to regenerate the epilogue.")
+
+    from app.config import DATA_DIR
+    from app.routers.presets import find_default_preset_id
+    eff_id = preset_id if (preset_id and preset_id != "default") else find_default_preset_id()
+    settings = json.loads((DATA_DIR / "presets" / "settings" / f"{eff_id}.json").read_text(encoding="utf-8"))
+    template = _load_template_for_session(template_id, template_version)
+
+    chapters = await db.execute_fetchall(
+        'SELECT id, title, "order", finalized FROM chapters WHERE session_id = ? ORDER BY "order"',
+        (session_id,),
+    )
+    if not chapters:
+        raise HTTPException(400, "Session has no chapters")
+
+    last_id, last_title, last_order, last_finalized = chapters[-1]
+    last_chunk_count_row = await db.execute_fetchall(
+        "SELECT COUNT(*) FROM chunks WHERE chapter_id = ?", (last_id,)
+    )
+    last_chunk_count = last_chunk_count_row[0][0]
+
+    # If an Epilogue chapter already has a chunk, refuse — the user should
+    # regenerate via the chunk-level regen button (creates a new version).
+    if last_title == "Epilogue" and last_chunk_count > 0:
+        raise HTTPException(
+            409,
+            "Epilogue already generated. Use the chunk regenerate button to produce another version.",
+        )
+
+    # The Epilogue is always its own dedicated chapter — never a renamed
+    # existing one. Three cases for what comes before it:
+    #   - Trailing chapter is empty (auto-created after a previous finalize):
+    #     drop it. It's an artifact, not real content.
+    #   - Trailing chapter has chunks but isn't finalized: refuse — the user
+    #     must finalize it first (so meta-analysis runs and the chapter title
+    #     gets generated, before the epilogue lands on top of that state).
+    #   - Trailing chapter is finalized (or is itself a previously-emptied
+    #     Epilogue chapter): just append the new Epilogue at order+1.
+    now = datetime.now(timezone.utc).isoformat()
+    if last_chunk_count == 0:
+        await db.execute("DELETE FROM chapters WHERE id = ?", (last_id,))
+        epilogue_chapter_order = last_order
+    elif not last_finalized:
+        raise HTTPException(
+            400,
+            "Finalize the current chapter first before finishing the session — meta-analysis and the chapter title need to land before the epilogue.",
+        )
+    else:
+        epilogue_chapter_order = last_order + 1
+
+    epilogue_chapter_id = str(uuid4())
+    await db.execute(
+        'INSERT INTO chapters (id, session_id, title, "order", finalized, created_at) VALUES (?,?,?,?,?,?)',
+        (epilogue_chapter_id, session_id, "Epilogue", epilogue_chapter_order, 0, now),
+    )
+    await db.commit()
+
+    # Source the tonal landing chunks from the LAST FINALIZED chapter (the
+    # actual end of the story) — not from the just-created empty epilogue
+    # chapter, which has nothing in it.
+    last_finalized_chapter = next(
+        (c for c in reversed(chapters) if c[3] and c[0] != epilogue_chapter_id),
+        None,
+    )
+    last_chunks: list[dict] = []
+    if last_finalized_chapter is not None:
+        n_recent = max(2, int(settings.get("chunkUpdateInterval", 10)))
+        rows = await db.execute_fetchall(
+            'SELECT id, chapter_id, "order", active_version, versions FROM chunks WHERE chapter_id = ? ORDER BY "order" DESC LIMIT ?',
+            (last_finalized_chapter[0], n_recent),
+        )
+        last_chunks = [
+            {"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]}
+            for r in reversed(rows)
+        ]
+
+    char_rows = await db.execute_fetchall(
+        """SELECT name, current_state, traits, key_events,
+                  identity, voice, appearance, backstory,
+                  backstory_additions, masked_intents
+           FROM characters WHERE session_id = ?""",
+        (session_id,),
+    )
+    characters = [
+        {
+            "name": r[0],
+            "currentState": r[1] or "",
+            "traits": json.loads(r[2]) if r[2] else [],
+            "keyEvents": json.loads(r[3]) if r[3] else [],
+            "identity": r[4] or "",
+            "voice": r[5] or "",
+            "appearance": r[6] or "",
+            "backstory": r[7] or "",
+            "backstoryAdditions": json.loads(r[8]) if r[8] else [],
+            "maskedIntents": json.loads(r[9]) if r[9] else [],
+        }
+        for r in char_rows
+    ]
+
+    fact_rows = await db.execute_fetchall(
+        "SELECT fact FROM facts WHERE session_id = ? ORDER BY id", (session_id,)
+    )
+    facts = [r[0] for r in fact_rows]
+
+    # Arc summary for the epilogue prompt — only finalized chapters count
+    # here. The just-deleted empty trailing chapter (if any) is automatically
+    # excluded (not finalized), and so is the new Epilogue chapter itself.
+    chapter_titles = [c[1] for c in chapters if c[3]]
+
+    messages = build_epilogue_messages(
+        settings=settings, template=template, characters=characters,
+        important_facts=facts, last_chunks=last_chunks,
+        chapter_titles=chapter_titles,
+    )
+
+    existing = job_manager.find_active_session_job(session_id, kinds=("narrative", "regenerate", "epilogue"))
+    if existing is not None:
+        raise HTTPException(409, "A generation is already running for this session.")
+
+    job = job_manager.create_job(
+        kind="epilogue",
+        label=f"Epilogue · session {session_id[:8]}",
+        session_id=session_id,
+        runner=lambda j: _epilogue_pipeline(j, epilogue_chapter_id, messages, settings),
+    )
+
+    return StreamingResponse(
+        _relay_queue_to_sse(job.subscribe()),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+async def _query_pipeline(job: Job, messages: list[dict], settings: dict, session_id: str, query_id: int):
+    """Runner: stream the consultant LLM, forward every event into the job's
+    event log, AND persist the result to `session_queries` so it survives
+    modal close + page reload + cross-device.
+
+    The row already exists with status='running' (created by the endpoint
+    before this pipeline starts) so `query_id` always points to a valid row.
+    Model auto-load + lock + activity tracking are handled by stream_query
+    → run_llm_stream."""
+    db = await get_db()
+    thinking_parts: list[str] = []
+    answer_parts: list[str] = []
+    final_thinking = ""
+    final_answer = ""
+    final_model = ""
     try:
         async for ev in stream_query(
             messages,
@@ -383,13 +634,50 @@ async def _query_pipeline(job: Job, messages: list[dict], settings: dict, sessio
             session_id=session_id,
             settings=settings,
         ):
+            t = ev.get("type")
+            if t == "thinking_chunk":
+                thinking_parts.append(ev.get("text", ""))
+            elif t == "answer_chunk":
+                answer_parts.append(ev.get("text", ""))
+            elif t == "done":
+                result = ev.get("result") or {}
+                final_thinking = result.get("thinking") or "".join(thinking_parts)
+                final_answer = result.get("answer") or "".join(answer_parts)
+                final_model = result.get("modelName", "") or ""
+            elif t == "error":
+                # stream_query catches exceptions (timeouts, JSON parse) and
+                # yields error events instead of re-raising. Without this we'd
+                # fall through to the success-commit path and persist an empty
+                # row as status='success'.
+                raise RuntimeError(ev.get("message") or "stream error")
             job.emit(ev)
+
+        completed_at = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            "UPDATE session_queries SET thinking = ?, answer = ?, status = ?, model = ?, completed_at = ? WHERE id = ?",
+            (final_thinking, final_answer, "success", final_model, completed_at, query_id),
+        )
+        await db.commit()
     except asyncio.CancelledError:
-        log.info("Query pipeline cancelled")
+        log.info("Query pipeline cancelled — saving partial Q&A")
+        partial_thinking = "".join(thinking_parts)
+        partial_answer = "".join(answer_parts)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            "UPDATE session_queries SET thinking = ?, answer = ?, status = ?, completed_at = ? WHERE id = ?",
+            (partial_thinking, partial_answer, "cancelled", completed_at, query_id),
+        )
+        await db.commit()
         job.emit({"type": "error", "message": "cancelled"})
         raise
     except Exception as e:
         log.exception("Query pipeline failed")
+        completed_at = datetime.now(timezone.utc).isoformat()
+        await db.execute(
+            "UPDATE session_queries SET thinking = ?, answer = ?, status = ?, error = ?, completed_at = ? WHERE id = ?",
+            ("".join(thinking_parts), "".join(answer_parts), "error", str(e), completed_at, query_id),
+        )
+        await db.commit()
         job.emit({"type": "error", "message": str(e)})
 
 
@@ -420,10 +708,27 @@ async def query_streaming(session_id: str, body: dict):
     template = _load_template_for_session(template_id, template_version)
 
     char_rows = await db.execute_fetchall(
-        "SELECT name, current_state, traits, key_events FROM characters WHERE session_id = ?",
+        """SELECT name, current_state, traits, key_events,
+                  identity, voice, appearance, backstory,
+                  backstory_additions, masked_intents
+           FROM characters WHERE session_id = ?""",
         (session_id,),
     )
-    characters = [{"name": r[0], "currentState": r[1], "traits": json.loads(r[2]), "keyEvents": json.loads(r[3])} for r in char_rows]
+    characters = [
+        {
+            "name": r[0],
+            "currentState": r[1] or "",
+            "traits": json.loads(r[2]) if r[2] else [],
+            "keyEvents": json.loads(r[3]) if r[3] else [],
+            "identity": r[4] or "",
+            "voice": r[5] or "",
+            "appearance": r[6] or "",
+            "backstory": r[7] or "",
+            "backstoryAdditions": json.loads(r[8]) if r[8] else [],
+            "maskedIntents": json.loads(r[9]) if r[9] else [],
+        }
+        for r in char_rows
+    ]
 
     fact_rows = await db.execute_fetchall(
         "SELECT fact FROM facts WHERE session_id = ? ORDER BY id", (session_id,)
@@ -445,7 +750,15 @@ async def query_streaming(session_id: str, body: dict):
     )
     recent_chunks = [{"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]} for r in reversed(recent_rows)]
 
-    history = body.get("history") or []
+    # History is loaded from DB (single source of truth) — clients no longer
+    # send it in the body. This means closing the modal mid-call doesn't lose
+    # the question; the next reopen reads it back from `session_queries`.
+    history_rows = await db.execute_fetchall(
+        "SELECT question, answer FROM session_queries WHERE session_id = ? AND status = 'success' ORDER BY id ASC",
+        (session_id,),
+    )
+    history = [{"question": r[0], "answer": r[1]} for r in history_rows]
+
     messages = build_query_messages(
         question=question,
         template=template,
@@ -456,11 +769,22 @@ async def query_streaming(session_id: str, body: dict):
         history=history,
     )
 
+    # Pre-create the row with status='running' so the modal can see it as
+    # in-flight if it reopens before the pipeline finishes. The pipeline
+    # updates this row when the LLM completes (or cancels / errors).
+    created_at = datetime.now(timezone.utc).isoformat()
+    cursor = await db.execute(
+        "INSERT INTO session_queries (session_id, question, status, created_at) VALUES (?, ?, 'running', ?)",
+        (session_id, question, created_at),
+    )
+    query_id = cursor.lastrowid
+    await db.commit()
+
     job = job_manager.create_job(
         kind="query",
         label=f"Ask · {question[:60]}{'…' if len(question) > 60 else ''}",
         session_id=session_id,
-        runner=lambda j: _query_pipeline(j, messages, settings, session_id),
+        runner=lambda j: _query_pipeline(j, messages, settings, session_id, query_id),
     )
 
     return StreamingResponse(
@@ -468,6 +792,29 @@ async def query_streaming(session_id: str, body: dict):
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+@router.get("/queries")
+async def list_queries(session_id: str):
+    """Return every Ask-the-Narrator query for this session, oldest first.
+    The modal loads this on mount so the Q&A history persists across
+    open/close, page reloads, and devices."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT id, question, thinking, answer, status, error, model, created_at, completed_at "
+        "FROM session_queries WHERE session_id = ? ORDER BY id ASC",
+        (session_id,),
+    )
+    return {
+        "queries": [
+            {
+                "id": r[0], "question": r[1], "thinking": r[2], "answer": r[3],
+                "status": r[4], "error": r[5], "model": r[6],
+                "createdAt": r[7], "completedAt": r[8],
+            }
+            for r in rows
+        ]
+    }
 
 
 @router.get("/generate/stream/active")
@@ -532,10 +879,11 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
             previous_attempt = None
 
         session_row = await db.execute_fetchall(
-            "SELECT settings_preset_id, template_id, last_meta_after_chunk_index, template_version FROM sessions WHERE id = ?",
+            "SELECT settings_preset_id, template_id, last_meta_after_chunk_index, template_version, pending_milestones FROM sessions WHERE id = ?",
             (session_id,),
         )
-        preset_id, template_id, last_meta_idx, template_version = session_row[0]
+        preset_id, template_id, last_meta_idx, template_version, pending_milestones_raw = session_row[0]
+        pending_milestones = json.loads(pending_milestones_raw) if pending_milestones_raw else []
         from app.routers.presets import find_default_preset_id
         eff_id = preset_id if (preset_id and preset_id != "default") else find_default_preset_id()
         from app.config import DATA_DIR
@@ -550,10 +898,27 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
         context_chunks = [{"id": r[0], "chapterId": r[1], "order": r[2], "active_version": r[3], "versions": r[4]} for r in context_rows]
 
         char_rows = await db.execute_fetchall(
-            "SELECT name, current_state, traits, key_events FROM characters WHERE session_id = ?",
+            """SELECT name, current_state, traits, key_events,
+                      identity, voice, appearance, backstory,
+                      backstory_additions, masked_intents
+               FROM characters WHERE session_id = ?""",
             (session_id,),
         )
-        characters = [{"name": r[0], "currentState": r[1], "traits": json.loads(r[2]), "keyEvents": json.loads(r[3])} for r in char_rows]
+        characters = [
+            {
+                "name": r[0],
+                "currentState": r[1] or "",
+                "traits": json.loads(r[2]) if r[2] else [],
+                "keyEvents": json.loads(r[3]) if r[3] else [],
+                "identity": r[4] or "",
+                "voice": r[5] or "",
+                "appearance": r[6] or "",
+                "backstory": r[7] or "",
+                "backstoryAdditions": json.loads(r[8]) if r[8] else [],
+                "maskedIntents": json.loads(r[9]) if r[9] else [],
+            }
+            for r in char_rows
+        ]
 
         fact_rows = await db.execute_fetchall(
             "SELECT fact FROM facts WHERE session_id = ? ORDER BY id", (session_id,)
@@ -565,6 +930,7 @@ async def _regen_pipeline(job: Job, chunk_id: str, directive: str):
             chunks=context_chunks, directive=directive, important_facts=facts,
             last_meta_after_chunk_index=last_meta_idx,
             previous_attempt=previous_attempt,
+            pending_milestones=pending_milestones,
         )
 
         job.emit({"type": "prep_done", "metaRan": False})

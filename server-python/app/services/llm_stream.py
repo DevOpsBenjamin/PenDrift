@@ -74,11 +74,15 @@ class _StructuredParser:
         self._next_field_idx = 0
         self._FIELDS = custom_markers or self._DEFAULT_TASK_MAP.get(kind, self._DEFAULT_TASK_MAP["narrative"])
 
-    def _build_marker_regex(self, field_name: str, is_string_value: bool, is_first: bool) -> str:
+    def _build_marker_regex(self, field_name: str, is_string_value: bool) -> str:
+        # Match either `{` (first field in JSON) or `,` (subsequent fields).
+        # Using a single regex makes the parser tolerant to providers that
+        # omit early fields — e.g. xAI dropping `thinking` because it streams
+        # reasoning natively. The skip-ahead loop in `push` finds the earliest
+        # remaining field's marker regardless of position in the JSON.
         f = re.escape(f'"{field_name}"')
-        prefix = r'\{' if is_first else r','
         suffix = r'"' if is_string_value else ''
-        return rf'{prefix}\s*{f}\s*:\s*{suffix}'
+        return rf'[\{{,]\s*{f}\s*:\s*{suffix}'
 
     def push(self, delta: str) -> list[dict]:
         self.buffer += delta
@@ -112,16 +116,30 @@ class _StructuredParser:
                     return events
                 continue
 
-            # Looking for the next field marker
+            # Looking for the next field marker. Skip-ahead variant: look at
+            # ALL remaining fields and pick the one whose marker appears first
+            # in the buffer. Tolerates providers that omit early fields (e.g.
+            # xAI dropping `thinking` from JSON because it streams reasoning
+            # via `reasoning_content` natively).
             if self._next_field_idx >= len(self._FIELDS):
                 return events
-            field_name, is_string_value = self._FIELDS[self._next_field_idx]
-            regex = self._build_marker_regex(field_name, is_string_value, self._next_field_idx == 0)
-            match = re.search(regex, self.buffer[self.cursor:])
-            if not match:
+
+            haystack = self.buffer[self.cursor:]
+            best_match = None
+            best_idx = None
+            for try_idx in range(self._next_field_idx, len(self._FIELDS)):
+                field_name, is_string_value = self._FIELDS[try_idx]
+                regex = self._build_marker_regex(field_name, is_string_value)
+                m = re.search(regex, haystack)
+                if m and (best_match is None or m.start() < best_match.start()):
+                    best_match = m
+                    best_idx = try_idx
+            if best_match is None:
                 return events
-            self.cursor += match.end()
-            self._next_field_idx += 1
+
+            field_name, is_string_value = self._FIELDS[best_idx]
+            self.cursor += best_match.end()
+            self._next_field_idx = best_idx + 1
             self.current_field = field_name
             self.in_string = is_string_value
             events.append({"type": f"{field_name}_start"})
@@ -282,6 +300,11 @@ async def stream_query(
     usage: dict = {}
     model_name = ""
     thinking_started_externally = False
+    # Accumulate streamed `reasoning_content` (xAI's native CoT channel) so we
+    # can fall back to it when the JSON output omits a `thinking` field —
+    # which is the case for the xAI query prompt (it instructs the model to
+    # use the native channel, not a JSON field).
+    streamed_thinking_parts: list[str] = []
 
     log.info("[query-stream] POST messages=%d max_tokens=%s", len(messages), max_tokens or "-")
 
@@ -306,6 +329,7 @@ async def stream_query(
                 if not thinking_started_externally:
                     thinking_started_externally = True
                     yield {"type": "thinking_start"}
+                streamed_thinking_parts.append(ev["text"])
                 yield {"type": "thinking_chunk", "text": ev["text"]}
             elif t == "model":
                 model_name = ev["name"]
@@ -320,7 +344,7 @@ async def stream_query(
                 yield {
                     "type": "done",
                     "result": {
-                        "thinking": result.get("thinking", ""),
+                        "thinking": result.get("thinking", "") or "".join(streamed_thinking_parts),
                         "answer": result.get("answer", ""),
                         "modelName": model_name,
                         "stats": ev["stats"],

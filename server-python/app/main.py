@@ -15,9 +15,17 @@ from app.routers import sessions, templates, presets, generate, chapters, charac
 async def lifespan(app: FastAPI):
     """Startup / shutdown."""
     from app.services.llm_process import reap_orphans, stop_server
+    from app.services.quote_cleanup import run_quote_cleanup
     # Kill any orphan llama-server left by a previous force-closed run.
     reap_orphans()
     await init_db()
+    # Idempotent normalization of typographic quote variants (« » smart quotes,
+    # paired single-quote phrases) in stored data. Re-runs every startup but
+    # is a fast no-op once the data is clean.
+    try:
+        await run_quote_cleanup()
+    except Exception as e:
+        logging.getLogger("pendrift.startup").warning("Quote cleanup failed: %s", e)
     yield
     await stop_server()
 

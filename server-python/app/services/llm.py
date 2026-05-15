@@ -76,21 +76,33 @@ def _provider_from_settings(settings: dict | None) -> tuple[str, dict]:
 
 
 def _merge_reasoning_into_json(content: str, reasoning: str) -> tuple[str, bool]:
-    """Inject `reasoning_content` into the JSON content's `thinking` field
-    when the provider streamed CoT separately (Grok / o-series pattern) and
-    the JSON output didn't already contain a `thinking` key.
+    """Inject `reasoning_content` into the JSON content's `thinking` field.
 
-    Returns (possibly-modified content, True if injection happened)."""
+    Grok / o-series provide two distinct CoT signals: a native streamed
+    `reasoning_content` (the model's deep deliberation) AND a JSON `thinking`
+    field that the narrative prompt asks for (focused setup notes for the
+    chunk). When both are present they describe different work — the streamed
+    one is the open-ended reasoning, the JSON one is the planned chunk
+    scaffold. Keep both: streamed first, JSON next, separated by a markdown
+    rule so the ThinkingPanel renders both as labeled sections.
+
+    Returns (possibly-modified content, True if any injection happened)."""
     if not reasoning or not content.strip().startswith("{"):
         return content, False
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
         return content, False
-    if parsed.get("thinking"):
-        return content, False
-    merged = {"thinking": reasoning, **parsed}
-    return json.dumps(merged, ensure_ascii=False, indent=2), True
+
+    existing = (parsed.get("thinking") or "").strip()
+    if existing:
+        parsed["thinking"] = (
+            f"### Native reasoning (streamed)\n\n{reasoning.strip()}\n\n"
+            f"---\n\n### Setup notes (planned)\n\n{existing}"
+        )
+    else:
+        parsed = {"thinking": reasoning, **parsed}
+    return json.dumps(parsed, ensure_ascii=False, indent=2), True
 
 
 async def _ensure_provider_ready(

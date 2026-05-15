@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     settings_preset_id TEXT NOT NULL DEFAULT 'default',
     cover_image     TEXT,
     last_meta_after_chunk_index INTEGER,
+    finished_at     TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -50,6 +51,14 @@ CREATE TABLE IF NOT EXISTS characters (
     current_state   TEXT,
     traits          TEXT NOT NULL DEFAULT '[]',    -- JSON array
     key_events      TEXT NOT NULL DEFAULT '[]',    -- JSON array
+    -- Structured fields produced by initial meta at session creation,
+    -- evolved by regular meta during the session.
+    identity            TEXT NOT NULL DEFAULT '',  -- durable self-conception
+    voice               TEXT NOT NULL DEFAULT '',  -- speech patterns / register
+    appearance          TEXT NOT NULL DEFAULT '',  -- durable visible presentation
+    backstory           TEXT NOT NULL DEFAULT '',  -- past, set at session start
+    backstory_additions TEXT NOT NULL DEFAULT '[]', -- JSON array, append-only
+    masked_intents      TEXT NOT NULL DEFAULT '[]', -- JSON array, removed on resolution
     last_updated    TEXT,
     PRIMARY KEY (session_id, name)
 );
@@ -88,6 +97,42 @@ CREATE TABLE IF NOT EXISTS api_logs (
     duration_ms     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_api_logs_session ON api_logs(session_id);
+
+CREATE TABLE IF NOT EXISTS session_queries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    question        TEXT NOT NULL,
+    thinking        TEXT NOT NULL DEFAULT '',
+    answer          TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'running', -- 'running' | 'success' | 'error' | 'cancelled'
+    error           TEXT,
+    model           TEXT,
+    created_at      TEXT NOT NULL,
+    completed_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_session_queries_session ON session_queries(session_id);
+
+-- Meta-analytical Q&A about a template (its goals, hidden mechanics, gaps).
+-- Lives at the template level, not per-session: the user can ask from a
+-- specific session (in which case `session_id` records the session that
+-- provided the evidence/context), or from the template view directly.
+-- session_id has NO FK so a session deletion doesn't drop the asks — they
+-- remain useful diagnostic history for the template.
+CREATE TABLE IF NOT EXISTS template_queries (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id      TEXT NOT NULL,
+    template_version TEXT,
+    session_id       TEXT,
+    question         TEXT NOT NULL,
+    thinking         TEXT NOT NULL DEFAULT '',
+    answer           TEXT NOT NULL DEFAULT '',
+    status           TEXT NOT NULL DEFAULT 'running',
+    error            TEXT,
+    model            TEXT,
+    created_at       TEXT NOT NULL,
+    completed_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_template_queries_template ON template_queries(template_id);
 """
 
 
@@ -139,9 +184,32 @@ async def _backup_db():
 async def _migrate_columns(db: aiosqlite.Connection):
     """Idempotent ALTERs for columns added after initial schema."""
     cur = await db.execute("PRAGMA table_info(sessions)")
-    cols = {row[1] for row in await cur.fetchall()}
-    if "template_version" not in cols:
+    session_cols = {row[1] for row in await cur.fetchall()}
+    if "template_version" not in session_cols:
         await db.execute("ALTER TABLE sessions ADD COLUMN template_version TEXT")
+    if "finished_at" not in session_cols:
+        await db.execute("ALTER TABLE sessions ADD COLUMN finished_at TEXT")
+    if "pending_milestones" not in session_cols:
+        await db.execute("ALTER TABLE sessions ADD COLUMN pending_milestones TEXT NOT NULL DEFAULT '[]'")
+    if "achieved_milestones" not in session_cols:
+        await db.execute("ALTER TABLE sessions ADD COLUMN achieved_milestones TEXT NOT NULL DEFAULT '[]'")
+    if "initial_meta_status" not in session_cols:
+        # 'done' for migration (existing sessions were running fine without
+        # this concept). New sessions set 'pending' explicitly at insert.
+        await db.execute("ALTER TABLE sessions ADD COLUMN initial_meta_status TEXT NOT NULL DEFAULT 'done'")
+
+    cur = await db.execute("PRAGMA table_info(characters)")
+    char_cols = {row[1] for row in await cur.fetchall()}
+    for col, ddl in [
+        ("identity", "TEXT NOT NULL DEFAULT ''"),
+        ("voice", "TEXT NOT NULL DEFAULT ''"),
+        ("appearance", "TEXT NOT NULL DEFAULT ''"),
+        ("backstory", "TEXT NOT NULL DEFAULT ''"),
+        ("backstory_additions", "TEXT NOT NULL DEFAULT '[]'"),
+        ("masked_intents", "TEXT NOT NULL DEFAULT '[]'"),
+    ]:
+        if col not in char_cols:
+            await db.execute(f"ALTER TABLE characters ADD COLUMN {col} {ddl}")
 
 
 def _seed_defaults():

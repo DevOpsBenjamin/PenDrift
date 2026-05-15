@@ -20,16 +20,39 @@
             <p class="text-xs mt-2 opacity-70">Examples: "Is a marriage planned?" · "What's Tiffany's secret?" · "Where could this go next?"</p>
           </div>
 
-          <div v-for="(qa, i) in history" :key="i" class="space-y-2">
-            <div class="flex gap-2">
+          <div v-for="(qa, i) in history" :key="qa.id ?? i" class="space-y-2">
+            <div class="flex gap-2 items-baseline">
               <span class="text-accent text-sm font-semibold shrink-0">Q.</span>
-              <p class="text-sm text-text-primary">{{ qa.question }}</p>
+              <p class="text-sm text-text-primary flex-1">{{ qa.question }}</p>
+              <span
+                v-if="qa.status && qa.status !== 'success'"
+                class="text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded shrink-0"
+                :class="{
+                  'bg-amber-500/15 text-amber-300': qa.status === 'running',
+                  'bg-text-muted/15 text-text-muted': qa.status === 'cancelled',
+                  'bg-error/15 text-error': qa.status === 'error',
+                }"
+              >{{ qa.status }}</span>
             </div>
             <details v-if="qa.thinking" class="ml-6">
               <summary class="text-xs text-text-muted cursor-pointer hover:text-text-secondary">💭 Thinking ({{ qa.thinking.length }} chars)</summary>
               <pre class="mt-2 p-2 text-xs text-text-muted whitespace-pre-wrap break-words font-ui leading-relaxed bg-bg-primary/40 rounded">{{ qa.thinking }}</pre>
             </details>
-            <div class="ml-6 text-sm text-text-secondary whitespace-pre-wrap leading-relaxed">{{ qa.answer }}</div>
+            <details v-if="qa.answer" class="ml-6 group">
+              <summary class="text-xs text-accent/80 cursor-pointer hover:text-accent select-none">
+                📖 Answer ({{ qa.answer.length }} chars) <span class="text-text-muted">— {{ qa.answer.slice(0, 90).replace(/\s+/g, ' ').trim() }}…</span>
+              </summary>
+              <div class="mt-2 text-sm text-text-secondary whitespace-pre-wrap leading-relaxed">{{ qa.answer }}</div>
+            </details>
+            <div v-else-if="qa.status === 'running'" class="ml-6 text-xs text-amber-300/80 italic">
+              Still processing in background — close and reopen the modal to refresh.
+            </div>
+            <div v-else-if="qa.status === 'cancelled' && !qa.answer" class="ml-6 text-xs text-text-muted italic">
+              Cancelled before any answer was produced.
+            </div>
+            <div v-else-if="qa.status === 'error'" class="ml-6 text-xs text-error italic">
+              Failed: {{ qa.error || 'unknown error' }}
+            </div>
           </div>
 
           <!-- Live streaming Q&A -->
@@ -84,7 +107,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue';
+import { ref, nextTick, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import * as queryApi from '../../api/query.js';
 
@@ -93,7 +116,7 @@ defineEmits(['close']);
 const route = useRoute();
 const sessionId = route.params.id;
 
-const history = ref([]);             // [{question, thinking, answer}]
+const history = ref([]);             // [{id, question, thinking, answer, status}]
 const question = ref('');
 const pendingQuestion = ref('');
 const liveThinking = ref('');
@@ -104,6 +127,24 @@ const error = ref('');
 const textarea = ref(null);
 const historyContainer = ref(null);
 let abortCtrl = null;
+
+onMounted(async () => {
+  try {
+    const res = await queryApi.getQueries(sessionId);
+    history.value = (res.queries || []).map(q => ({
+      id: q.id,
+      question: q.question,
+      thinking: q.thinking || '',
+      answer: q.answer || '',
+      status: q.status,
+      error: q.error,
+    }));
+    scrollToBottom();
+  } catch (err) {
+    // Non-fatal: empty history just shows the placeholder
+    error.value = `Could not load past queries: ${err.message}`;
+  }
+});
 
 function autoResize() {
   if (!textarea.value) return;
@@ -134,12 +175,11 @@ async function ask() {
   scrollToBottom();
 
   abortCtrl = new AbortController();
-  const histPayload = history.value.map(h => ({ question: h.question, answer: h.answer }));
 
   try {
     await queryApi.streamQuery(
       sessionId,
-      { question: q, history: histPayload },
+      { question: q },
       handleEvent,
       abortCtrl.signal,
     );
@@ -156,6 +196,7 @@ async function ask() {
         question: pendingQuestion.value,
         thinking: liveThinking.value,
         answer: liveAnswer.value,
+        status: 'success',
       });
     }
     pendingQuestion.value = '';

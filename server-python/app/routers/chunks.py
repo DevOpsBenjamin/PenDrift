@@ -11,6 +11,19 @@ from app.database import get_db
 router = APIRouter()
 
 
+async def _reject_if_finished(db, session_id: str, action: str) -> None:
+    """Raise 409 if the session is finished (read-only). Used by every chunk
+    mutation route — edit, version add, version switch, delete."""
+    row = await db.execute_fetchall(
+        "SELECT finished_at FROM sessions WHERE id = ?", (session_id,)
+    )
+    if row and row[0][0] is not None:
+        raise HTTPException(
+            409,
+            f"Cannot {action}: session is finished (read-only). Reopen the session first.",
+        )
+
+
 @router.put("/{chunk_id}")
 async def edit_chunk(session_id: str, chunk_id: str, body: dict):
     narrative = body.get("narrative")
@@ -18,6 +31,7 @@ async def edit_chunk(session_id: str, chunk_id: str, body: dict):
         raise HTTPException(400, "narrative is required")
 
     db = await get_db()
+    await _reject_if_finished(db, session_id, "edit chunks")
     row = await db.execute_fetchall(
         "SELECT versions, active_version FROM chunks WHERE id = ? AND session_id = ?",
         (chunk_id, session_id),
@@ -51,6 +65,7 @@ async def edit_chunk(session_id: str, chunk_id: str, body: dict):
 @router.delete("/{chunk_id}/version")
 async def delete_version(session_id: str, chunk_id: str, body: dict):
     db = await get_db()
+    await _reject_if_finished(db, session_id, "delete a chunk version")
     row = await db.execute_fetchall(
         "SELECT versions, active_version FROM chunks WHERE id = ? AND session_id = ?",
         (chunk_id, session_id),
@@ -85,6 +100,7 @@ async def switch_version(session_id: str, chunk_id: str, body: dict):
         raise HTTPException(400, "versionIndex is required")
 
     db = await get_db()
+    await _reject_if_finished(db, session_id, "switch chunk version")
     row = await db.execute_fetchall(
         "SELECT versions FROM chunks WHERE id = ? AND session_id = ?",
         (chunk_id, session_id),
@@ -104,6 +120,7 @@ async def switch_version(session_id: str, chunk_id: str, body: dict):
 @router.delete("/last")
 async def delete_last_chunk(session_id: str, chapterId: str = Query(...)):
     db = await get_db()
+    await _reject_if_finished(db, session_id, "delete chunks")
     row = await db.execute_fetchall(
         'SELECT id FROM chunks WHERE session_id = ? AND chapter_id = ? ORDER BY "order" DESC LIMIT 1',
         (session_id, chapterId),

@@ -45,6 +45,12 @@
               {{ elapsed(call) }}
             </span>
             <button
+              v-if="call.request_file"
+              class="px-2 py-0.5 text-xs text-accent hover:underline cursor-pointer"
+              @click="openDump(call.request_file, 'request')"
+              title="View the request sent to the model"
+            >query</button>
+            <button
               class="px-2 py-0.5 text-xs border border-error/40 text-error rounded hover:bg-error/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               :disabled="cancelling.has(call.id)"
               @click="cancelOne(call.id)"

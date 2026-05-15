@@ -23,9 +23,6 @@
         queued{{ primary.queuePosition > 0 ? ` · ${primary.queuePosition} ahead` : '' }}
       </span>
 
-      <span class="text-xs text-text-primary truncate max-w-[180px]" :title="primary.label">
-        {{ primary.label }}
-      </span>
 
       <button
         class="shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 border border-error/40 text-error rounded hover:bg-error/10 transition-colors cursor-pointer"
@@ -47,17 +44,18 @@ import { useJobsStore } from '../../stores/jobs.js';
 
 const store = useJobsStore();
 
-// Narrative + regenerate already have a dedicated streaming UI in SessionView.
-const HIDDEN_KINDS = new Set(['narrative', 'regenerate']);
-
-const visibleJobs = computed(() =>
-  store.active.filter(j => !HIDDEN_KINDS.has(j.kind))
-);
+// Show every active job. Narrative + regenerate also have a dedicated
+// streaming UI in SessionView, but the header badge stays visible when the
+// user navigates away (Templates / Activity / Settings) so they don't lose
+// track of in-flight generation.
+const visibleJobs = computed(() => store.active);
 
 const primary = computed(() => visibleJobs.value[0] || {});
 const extraCount = computed(() => Math.max(0, visibleJobs.value.length - 1));
 
 const KIND_LABELS = {
+  'narrative': 'Narrate',
+  'regenerate': 'Regen',
   'chub-import': 'Import',
   'rerun': 'Rerun',
   'enrich': 'Enrich',
@@ -66,10 +64,15 @@ const KIND_LABELS = {
   'title': 'Title',
   'finalize-chapter': 'Finalize',
   'query': 'Ask',
+  'epilogue': 'Epilogue',
+  'template-query': 'Ask Template',
+  'template-rewrite': 'Rewrite Tpl',
 };
 function kindLabel(kind) { return KIND_LABELS[kind] || kind; }
 
 const KIND_BADGE = {
+  'narrative': 'bg-accent/15 text-accent',
+  'regenerate': 'bg-amber-500/15 text-amber-300',
   'chub-import': 'bg-accent/15 text-accent',
   'rerun': 'bg-purple-500/15 text-purple-300',
   'enrich': 'bg-purple-500/15 text-purple-300',
@@ -78,6 +81,9 @@ const KIND_BADGE = {
   'title': 'bg-emerald-500/15 text-emerald-300',
   'finalize-chapter': 'bg-emerald-500/15 text-emerald-300',
   'query': 'bg-blue-500/15 text-blue-300',
+  'epilogue': 'bg-purple-500/15 text-purple-300',
+  'template-query': 'bg-purple-500/15 text-purple-300',
+  'template-rewrite': 'bg-purple-500/15 text-purple-300',
 };
 function kindBadgeClass(kind) {
   return KIND_BADGE[kind] || 'bg-bg-secondary text-text-secondary';
